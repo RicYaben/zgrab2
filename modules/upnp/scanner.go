@@ -1,6 +1,8 @@
 package upnp
 
 import (
+	"net"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/zmap/zgrab2"
 )
@@ -13,7 +15,11 @@ type Flags struct {
 	zgrab2.BaseFlags
 	zgrab2.UDPFlags
 
-	Verbose bool `long:"verbose" description:"More verbose logging, include debug fields in the scan results"`
+	Verbose     bool   `long:"verbose" description:"More verbose logging, include debug fields in the scan results"`
+	RequestLine string `long:"request-line" default:"M-SEARCH * HTTP/1.1" description:"Request method"`
+	UserAgent   string `long:"user-agent" default:"Mozilla/5.0 zgrab/0.x" description:"Set a custom user agent"`
+	Man         string `long:"man" default:"ssdp:discover" description:"Extension framework"`
+	St          string `long:"st" default:"ssdp:all" description:"Search target"`
 }
 
 // Module implements the zgrab2.Module interface.
@@ -22,7 +28,19 @@ type Module struct {
 
 // Scanner implements the zgrab2.Scanner interface.
 type Scanner struct {
-	config *Flags
+	config  *Flags
+	builder UPnPBuilder
+}
+
+type Results struct {
+	Response Response `json:"response,omitempty"`
+}
+
+type scan struct {
+	connection net.Conn
+	scanner    *Scanner
+	target     *zgrab2.ScanTarget
+	results    Results
 }
 
 // RegisterModule registers the zgrab2 module.
@@ -71,7 +89,15 @@ func (flags *Flags) Help() string {
 // Init initializes the Scanner.
 func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	f, _ := flags.(*Flags)
+
+	builder, err := NewUpnpBuilder(f.RequestLine, f.UserAgent, f.Man, f.St)
+	if err != nil {
+		return err
+	}
+
+	scanner.builder = builder
 	scanner.config = f
+
 	return nil
 }
 
@@ -101,5 +127,26 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
 	defer conn.Close()
-	ret := new(Message)
+
+	var port uint16 = uint16(scanner.config.BaseFlags.Port)
+	if target.Port != nil {
+		port = uint16(*target.Port)
+	}
+
+	host := target.Domain
+	if len(host) == 0 {
+		host = target.IP.String()
+	}
+
+	req := scanner.builder.EncodeToString(host, port)
+	// TODO: finish this.
+	// I think this should go to a channel, and whenever we get a response this returns something
+
+	ret := scan{
+		scanner:    scanner,
+		connection: conn,
+		target:     &target,
+	}
+	//ret := new(Message)
+	return zgrab2.SCAN_SUCCESS, &ret, nil
 }

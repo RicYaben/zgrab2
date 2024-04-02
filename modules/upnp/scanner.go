@@ -1,7 +1,7 @@
 package upnp
 
 import (
-	"net"
+	"net/http"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/zmap/zgrab2"
@@ -29,18 +29,11 @@ type Module struct {
 // Scanner implements the zgrab2.Scanner interface.
 type Scanner struct {
 	config  *Flags
-	builder UPnPBuilder
+	builder SSDPBuilder
 }
 
 type Results struct {
-	Response Response `json:"response,omitempty"`
-}
-
-type scan struct {
-	connection net.Conn
-	scanner    *Scanner
-	target     *zgrab2.ScanTarget
-	results    Results
+	Response *http.Response `json:"response,omitempty"`
 }
 
 // RegisterModule registers the zgrab2 module.
@@ -90,7 +83,7 @@ func (flags *Flags) Help() string {
 func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	f, _ := flags.(*Flags)
 
-	builder, err := NewUpnpBuilder(f.RequestLine, f.UserAgent, f.Man, f.St)
+	builder, err := NewSSDPBuilder(f.RequestLine, f.UserAgent, f.Man, f.St)
 	if err != nil {
 		return err
 	}
@@ -128,7 +121,7 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	}
 	defer conn.Close()
 
-	var port uint16 = uint16(scanner.config.BaseFlags.Port)
+	port := uint16(scanner.config.BaseFlags.Port)
 	if target.Port != nil {
 		port = uint16(*target.Port)
 	}
@@ -138,15 +131,23 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		host = target.IP.String()
 	}
 
-	req := scanner.builder.EncodeToString(host, port)
-	// TODO: finish this.
-	// I think this should go to a channel, and whenever we get a response this returns something
+	ret := &Results{}
+	handler := scanner.builder.Build(host, port)
 
-	ret := scan{
-		scanner:    scanner,
-		connection: conn,
-		target:     &target,
+	b, err := handler.Encode()
+	if err != nil {
+		return zgrab2.SCAN_UNKNOWN_ERROR, ret, err
 	}
-	//ret := new(Message)
-	return zgrab2.SCAN_SUCCESS, &ret, nil
+
+	if _, err := conn.Write(b); err != nil {
+		return zgrab2.SCAN_UNKNOWN_ERROR, ret, err
+	}
+
+	resp, err := handler.ReadHttpResponse(conn)
+	if err != nil {
+		return zgrab2.SCAN_UNKNOWN_ERROR, ret, err
+	}
+
+	ret.Response = resp
+	return zgrab2.SCAN_SUCCESS, ret, nil
 }

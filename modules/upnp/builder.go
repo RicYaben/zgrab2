@@ -1,24 +1,78 @@
+/*
+This package contains an SSDP request builder.
+The request handler was inspired on https://github.com/huin/goupnp/blob/main/httpu/httpu.go
+*/
 package upnp
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
+	"net"
+	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"golang.org/x/exp/slices"
 )
 
-type UPnPBuilder interface {
-	setUserAgent(string) error
-	setRequestLine(string) error
-	setMan(string)
-	setST(string) error
-	EncodeToString(host string, port uint16) string // Encodes the UPnP message a string
+type SSDPHandler struct {
+	request *http.Request
 }
 
-func NewUpnpBuilder(requestLine, userAgent, man, st string) (UPnPBuilder, error) {
-	msg := &upnpBuilder{}
+func NewSSDPHandler(req *http.Request) *SSDPHandler {
+	return &SSDPHandler{request: req}
+}
 
-	err := msg.setRequestLine(requestLine)
+func (handler *SSDPHandler) Encode() ([]byte, error) {
+	var buff bytes.Buffer
+
+	req := handler.request
+	reqLine := fmt.Sprintf("%s %s HTTP/1.1\r\n", req.Method, req.URL.RequestURI())
+	if _, err := buff.Write([]byte(reqLine)); err != nil {
+		return nil, err
+	}
+
+	if err := req.Header.Write(&buff); err != nil {
+		return nil, err
+	}
+
+	if _, err := buff.Write([]byte("\r\n")); err != nil {
+		return nil, err
+	}
+
+	return buff.Bytes(), nil
+}
+
+func (handler *SSDPHandler) ReadHttpResponse(conn net.Conn) (*http.Response, error) {
+	err := conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, 2048)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	respBuf := bufio.NewReader(bytes.NewBuffer(buf[:n]))
+	return http.ReadResponse(respBuf, handler.request)
+}
+
+type SSDPBuilder interface {
+	setUserAgent(userAgent string) error
+	setMethod(method string) error
+	setMan(man string)
+	setST(st string) error
+	Build(target string, port uint16) *SSDPHandler
+}
+
+func NewSSDPBuilder(method, userAgent, man, st string) (SSDPBuilder, error) {
+	msg := &ssdpBuilder{}
+
+	err := msg.setMethod(method)
 	if err != nil {
 		return nil, err
 	}
@@ -35,19 +89,18 @@ func NewUpnpBuilder(requestLine, userAgent, man, st string) (UPnPBuilder, error)
 
 	msg.setMan(man)
 	return msg, nil
-
 }
 
-type upnpBuilder struct {
+type ssdpBuilder struct {
 	// First Line
-	requestLine string `long:"request-line" default:"M-SEARCH * HTTP/1.1" description:"Request method"`
+	method string `long:"method" default:"M-SEARCH" description:"Request method"`
 	// Headers
 	userAgent string `long:"user-agent" default:"Mozilla/5.0 zgrab/0.x" description:"Set a custom user agent"`
 	man       string `long:"man" default:"ssdp:discover" description:"Extension framework"`
 	st        string `long:"st" default:"ssdp:all" description:"Search target"`
 }
 
-func (b *upnpBuilder) setUserAgent(ua string) error {
+func (b *ssdpBuilder) setUserAgent(ua string) error {
 	if len(ua) == 0 {
 		return fmt.Errorf(`invalid SSDP user-agent "%s"`, ua)
 	}
@@ -56,27 +109,16 @@ func (b *upnpBuilder) setUserAgent(ua string) error {
 	return nil
 }
 
-func (b *upnpBuilder) setRequestLine(req string) error {
-	f := strings.Fields(req)
-	if len(f) != 3 {
-		return fmt.Errorf(`malformed request line "%s"`, req)
-	}
-
-	method := f[0]
+func (b *ssdpBuilder) setMethod(method string) error {
 	if !slices.Contains([]string{"M-SEARCH", "NOTIFY"}, method) {
 		return fmt.Errorf(`invalid SSDP method "%s"`, method)
 	}
 
-	version := f[2]
-	if !strings.Contains("HTTP/", version) {
-		return fmt.Errorf(`invalid HTTP version "%s"`, version)
-	}
-
-	b.requestLine = req
+	b.method = method
 	return nil
 }
 
-func (b *upnpBuilder) setMan(man string) {
+func (b *ssdpBuilder) setMan(man string) {
 	if man != "ssdp:discover" {
 		fmt.Println(fmt.Errorf(
 			`MAN value in SSDP should be "ssdp:discover". 
@@ -85,7 +127,7 @@ func (b *upnpBuilder) setMan(man string) {
 	b.man = man
 }
 
-func (b *upnpBuilder) setST(st string) error {
+func (b *ssdpBuilder) setST(st string) error {
 	if !strings.HasPrefix(st, "ssdp:") ||
 		!strings.HasPrefix(st, "uuid:") ||
 		!strings.HasPrefix(st, "urn:") {
@@ -96,15 +138,19 @@ func (b *upnpBuilder) setST(st string) error {
 	return nil
 }
 
-// Encode the SSDP message as a string
-func (b *upnpBuilder) EncodeToString(host string, port uint16) string {
-	h := fmt.Sprintf("%s:%d", host, port)
-	return fmt.Sprintf(`
-	%s
-	HOST: %s
-	MAN: "%s"
-	ST: %s
-	USER-AGENT: %s
+func (b *ssdpBuilder) Build(target string, port uint16) *SSDPHandler {
+	host := fmt.Sprintf("%s:%d", target, port)
+	req := &http.Request{
+		Method: b.method,
+		Host:   host,
+		URL:    &url.URL{Opaque: "*"},
+		Header: http.Header{
+			"HOST":       []string{host},
+			"MAN":        []string{b.man},
+			"ST":         []string{b.st},
+			"USER-AGENT": []string{b.userAgent},
+		},
+	}
 
-	`, b.requestLine, h, b.man, b.st, b.userAgent)
+	return NewSSDPHandler(req)
 }

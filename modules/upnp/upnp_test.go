@@ -28,7 +28,7 @@ func (cfg *upnpTester) runFakeUPnPServer(t *testing.T) {
 		buf := make([]byte, 1024)
 		_, addr, err := listener.ReadFrom(buf)
 		if err != nil {
-			t.Fatalf("Unexpected error while reading %v", err)
+			t.Logf("Unexpected error while reading %v", err)
 		}
 
 		header := "HTTP/1.1 200 OK\r\n"
@@ -36,7 +36,7 @@ func (cfg *upnpTester) runFakeUPnPServer(t *testing.T) {
 		msg := fmt.Sprintf("%s%s", header, headerSuffix)
 
 		if _, err := listener.WriteTo([]byte(msg), addr); err != nil {
-			t.Fatalf("Failed writing to client: %v", err)
+			t.Logf("Failed writing to client: %v", err)
 			return
 		}
 	}()

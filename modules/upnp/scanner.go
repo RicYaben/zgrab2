@@ -7,8 +7,6 @@ import (
 	"github.com/zmap/zgrab2"
 )
 
-// Scan results are in log.go
-
 // Flags holds the command-line configuration for the bacnet scan module.
 // Populated by the framework.
 type Flags struct {
@@ -16,9 +14,9 @@ type Flags struct {
 	zgrab2.UDPFlags
 
 	Method    string `long:"method" default:"M-SEARCH" description:"Request method. Either M-SEARCH or NOTIFY"`
-	UserAgent string `long:"user-agent" default:"Mozilla/5.0 UPnP/2.0 zgrab/0.x" description:"Set a custom user agent"`
+	UserAgent string `long:"user-agent" default:"Mozilla/5.0 UPnP/2.0 zgrab/0.x" description:"Set a custom user agent"` // Format: "OS/version UPnP/2.0 APP/version"; you may want to set some extra information in this header, e.g., a link to a website.
 	Man       string `long:"man" default:"ssdp:discover" description:"Extension framework"`
-	St        string `long:"st" default:"upnp:rootdevice" choice:"upnp:rootdevice" choice:"ssdp:all" description:"Search target"`
+	St        string `long:"st" default:"upnp:rootdevice" description:"Search target"`
 }
 
 // Module implements the zgrab2.Module interface.
@@ -133,6 +131,13 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	ret := &Results{}
 	handler := scanner.builder.Build(host, port)
 
+	// NOTE: Not an expert on ZGrab error conventions,
+	// For this protocol it only matters to send the request
+	// and get an HTTP response. If we don't get an HTTP response
+	// we have an issue; and if the response is other than a
+	// valid UPnP SSDP discover response we should return another
+	// type of error altogether. For the rest of the cases,
+	// this handler will do the job.
 	b, err := handler.Encode()
 	if err != nil {
 		return zgrab2.SCAN_UNKNOWN_ERROR, ret, err
@@ -148,5 +153,6 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	}
 
 	ret.Response = resp
+	// [4/3/2024] TODO: Handle the different HTTP status and parse the response somehow?
 	return zgrab2.SCAN_SUCCESS, ret, nil
 }

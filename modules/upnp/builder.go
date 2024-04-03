@@ -51,6 +51,9 @@ func (handler *SSDPHandler) Encode() ([]byte, error) {
 }
 
 func (handler *SSDPHandler) ReadHttpResponse(conn net.Conn) (*http.Response, error) {
+	// NOTE: 3 seconds is an arbitrary amount of time to wait.
+	// In most cases, 1s should be more than enough. While stress testing
+	// I saw delays of 1-2 seconds (up to 5 in rare occasions)
 	err := conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	if err != nil {
 		return nil, err
@@ -99,11 +102,11 @@ func NewSSDPBuilder(method, userAgent, man, st string) (SSDPBuilder, error) {
 
 type ssdpBuilder struct {
 	// First Line
-	method string `long:"method" default:"M-SEARCH" description:"Request method"`
+	method string
 	// Headers
-	userAgent string `long:"user-agent" default:"Mozilla/5.0 zgrab/0.x" description:"Set a custom user agent"`
-	man       string `long:"man" default:"ssdp:discover" description:"Extension framework"`
-	st        string `long:"st" default:"ssdp:all" description:"Search target"`
+	userAgent string
+	man       string
+	st        string
 }
 
 func (b *ssdpBuilder) setUserAgent(ua string) error {
@@ -115,6 +118,12 @@ func (b *ssdpBuilder) setUserAgent(ua string) error {
 	return nil
 }
 
+// This method accepts a choice of M-SEARCH or NOTIFY as the method
+// to use while probing UPnP devices. M-SEARCH should be used when
+// we want to identify exposed devices, while NOTIFY can be used to
+// identify devices that accept modifying requests from unknown hosts.
+// Use NOTIFY with care and DO NOT use this value lightly, you may
+// break something!
 func (b *ssdpBuilder) setMethod(method string) error {
 	if !slices.Contains([]string{"M-SEARCH", "NOTIFY"}, method) {
 		return fmt.Errorf(`invalid SSDP method "%s"`, method)
@@ -133,6 +142,12 @@ func (b *ssdpBuilder) setMan(man string) {
 	b.man = fmt.Sprintf(`"%s"`, man)
 }
 
+// Validate and set the ST header value.
+// Note: while the "ssdp:all" value should return larger and more interesting
+// responses, most devices will refuse to respond to this value.
+// "upnp:rootdevice" yielded the most results while sampling 1% of the
+// Internet with different values and combinations. Use with care and refer
+// to the UPnP documentation when in doubt.
 func (b *ssdpBuilder) setST(st string) error {
 	if !strings.HasPrefix(st, "ssdp:") &&
 		!strings.HasPrefix(st, "upnp:") &&

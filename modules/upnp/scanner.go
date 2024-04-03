@@ -15,11 +15,10 @@ type Flags struct {
 	zgrab2.BaseFlags
 	zgrab2.UDPFlags
 
-	Verbose     bool   `long:"verbose" description:"More verbose logging, include debug fields in the scan results"`
-	RequestLine string `long:"request-line" default:"M-SEARCH * HTTP/1.1" description:"Request method"`
-	UserAgent   string `long:"user-agent" default:"Mozilla/5.0 zgrab/0.x" description:"Set a custom user agent"`
-	Man         string `long:"man" default:"ssdp:discover" description:"Extension framework"`
-	St          string `long:"st" default:"ssdp:all" description:"Search target"`
+	Method    string `long:"method" default:"M-SEARCH" description:"Request method. Either M-SEARCH or NOTIFY"`
+	UserAgent string `long:"user-agent" default:"Mozilla/5.0 zgrab/0.x" description:"Set a custom user agent"`
+	Man       string `long:"man" default:"ssdp:discover" description:"Extension framework"`
+	St        string `long:"st" default:"ssdp:all" description:"Search target"`
 }
 
 // Module implements the zgrab2.Module interface.
@@ -83,7 +82,7 @@ func (flags *Flags) Help() string {
 func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	f, _ := flags.(*Flags)
 
-	builder, err := NewSSDPBuilder(f.RequestLine, f.UserAgent, f.Man, f.St)
+	builder, err := NewSSDPBuilder(f.Method, f.UserAgent, f.Man, f.St)
 	if err != nil {
 		return err
 	}

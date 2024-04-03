@@ -16,9 +16,9 @@ type Flags struct {
 	zgrab2.UDPFlags
 
 	Method    string `long:"method" default:"M-SEARCH" description:"Request method. Either M-SEARCH or NOTIFY"`
-	UserAgent string `long:"user-agent" default:"Mozilla/5.0 zgrab/0.x" description:"Set a custom user agent"`
+	UserAgent string `long:"user-agent" default:"Mozilla/5.0 UPnP/2.0 zgrab/0.x" description:"Set a custom user agent"`
 	Man       string `long:"man" default:"ssdp:discover" description:"Extension framework"`
-	St        string `long:"st" default:"ssdp:all" description:"Search target"`
+	St        string `long:"st" default:"upnp:rootdevice" choice:"upnp:rootdevice" choice:"ssdp:all" description:"Search target"`
 }
 
 // Module implements the zgrab2.Module interface.

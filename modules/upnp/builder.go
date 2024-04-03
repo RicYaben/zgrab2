@@ -29,6 +29,10 @@ func (handler *SSDPHandler) Encode() ([]byte, error) {
 	var buff bytes.Buffer
 
 	req := handler.request
+
+	// As pointed out in the goupnp project, dumping the request directly creates
+	// duplicate and extra headers that may confuse the target.
+	// This writes just the request and the headers instead.
 	reqLine := fmt.Sprintf("%s %s HTTP/1.1\r\n", req.Method, req.URL.RequestURI())
 	if _, err := buff.Write([]byte(reqLine)); err != nil {
 		return nil, err
@@ -43,15 +47,17 @@ func (handler *SSDPHandler) Encode() ([]byte, error) {
 	}
 
 	return buff.Bytes(), nil
+
 }
 
 func (handler *SSDPHandler) ReadHttpResponse(conn net.Conn) (*http.Response, error) {
-	err := conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	err := conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	if err != nil {
 		return nil, err
 	}
 
-	buf := make([]byte, 2048)
+	// 1k should be enough for a M-SEARCH request, which only contains headers
+	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return nil, err
@@ -124,12 +130,13 @@ func (b *ssdpBuilder) setMan(man string) {
 			`MAN value in SSDP should be "ssdp:discover". 
 			Using "%s" instead`, man))
 	}
-	b.man = man
+	b.man = fmt.Sprintf(`"%s"`, man)
 }
 
 func (b *ssdpBuilder) setST(st string) error {
-	if !strings.HasPrefix(st, "ssdp:") ||
-		!strings.HasPrefix(st, "uuid:") ||
+	if !strings.HasPrefix(st, "ssdp:") &&
+		!strings.HasPrefix(st, "upnp:") &&
+		!strings.HasPrefix(st, "uuid:") &&
 		!strings.HasPrefix(st, "urn:") {
 		return fmt.Errorf("invalid ST. Check the UPnP documentation for valid identifiers")
 	}

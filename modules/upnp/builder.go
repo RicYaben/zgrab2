@@ -149,15 +149,14 @@ func (b *ssdpBuilder) setMan(man string) {
 // Internet with different values and combinations. Use with care and refer
 // to the UPnP documentation when in doubt.
 func (b *ssdpBuilder) setST(st string) error {
-	if !strings.HasPrefix(st, "ssdp:") &&
-		!strings.HasPrefix(st, "upnp:") &&
-		!strings.HasPrefix(st, "uuid:") &&
-		!strings.HasPrefix(st, "urn:") {
-		return fmt.Errorf("invalid ST. Check the UPnP documentation for valid identifiers")
+	if strings.HasPrefix(st, "ssdp:") ||
+		strings.HasPrefix(st, "upnp:") ||
+		strings.HasPrefix(st, "uuid:") ||
+		strings.HasPrefix(st, "urn:") {
+		b.st = st
+		return nil
 	}
-
-	b.st = st
-	return nil
+	return fmt.Errorf("invalid ST %s. Check the UPnP documentation for valid identifiers", st)
 }
 
 func (b *ssdpBuilder) Build(target string, port uint16) *SSDPHandler {

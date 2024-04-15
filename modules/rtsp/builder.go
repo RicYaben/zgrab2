@@ -12,6 +12,7 @@ import (
 )
 
 type Request struct {
+	Version string
 	Method  string
 	Url     *url.URL
 	Headers textproto.MIMEHeader
@@ -25,7 +26,7 @@ type Response struct {
 func (req *Request) Encode() ([]byte, error) {
 	var buf bytes.Buffer
 
-	reqLine := fmt.Sprintf("%s %s RTSP/1.0\r\n", req.Method, req.Url.String())
+	reqLine := fmt.Sprintf("%s %s RTSP/%s\r\n", req.Method, req.Url.String(), req.Version)
 	if _, err := buf.Write([]byte(reqLine)); err != nil {
 		return nil, err
 	}

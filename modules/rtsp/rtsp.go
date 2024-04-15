@@ -32,6 +32,7 @@ import (
 type Flags struct {
 	zgrab2.BaseFlags
 	UserAgent string `long:"user-agent" default:"Mozilla/5.0 zgrab/0.x" description:"Set a custom user agent"`
+	Version   string `long:"version" default:"1.0" description:"Version of RTSP to use, either 1.0 or 2.0"`
 }
 
 func (flags *Flags) Validate(args []string) error { return nil }
@@ -161,7 +162,8 @@ func (scan *scan) Grab() *zgrab2.ScanError {
 
 func (scan *scan) Describe() *Request {
 	return &Request{
-		Method: "DESCRIBE",
+		Version: scan.scanner.config.Version,
+		Method:  "DESCRIBE",
 		Headers: textproto.MIMEHeader{
 			"Accept":     []string{"application/sdp"},
 			"CSeq":       []string{"1"},
@@ -173,7 +175,8 @@ func (scan *scan) Describe() *Request {
 
 func (scan *scan) Options() *Request {
 	return &Request{
-		Method: "OPTIONS",
+		Version: scan.scanner.config.Version,
+		Method:  "OPTIONS",
 		Headers: textproto.MIMEHeader{
 			"CSeq":       []string{"1"},
 			"User-Agent": []string{scan.scanner.config.UserAgent},

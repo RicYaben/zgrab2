@@ -196,12 +196,12 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 			// The case of header names is normalized to title case later by HTTP library
 			// explicitly ToLower() to catch duplicates more easily
 			hName := strings.ToLower(headerNames[i])
-			switch {
-			case hName == "host":
+			switch hName {
+			case "host":
 				log.Panicf("Attempt to set immutable header 'Host', specify this in targets file")
-			case hName == "user-agent":
+			case "user-agent":
 				log.Panicf("Attempt to set special header 'User-Agent', use --user-agent instead")
-			case hName == "content-length":
+			case "content-length":
 				log.Panicf("Attempt to set immutable header 'Content-Length'")
 			}
 			// Disallow duplicate headers
@@ -213,17 +213,20 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 		}
 	}
 
-	if fl.ComputeDecodedBodyHashAlgorithm == "sha1" {
+	switch fl.ComputeDecodedBodyHashAlgorithm {
+	case "sha1":
 		scanner.decodedHashFn = func(body []byte) string {
 			rawHash := sha1.Sum(body)
 			return fmt.Sprintf("sha1:%s", hex.EncodeToString(rawHash[:]))
 		}
-	} else if fl.ComputeDecodedBodyHashAlgorithm == "sha256" {
+
+	case "sha256":
 		scanner.decodedHashFn = func(body []byte) string {
 			rawHash := sha256.Sum256(body)
 			return fmt.Sprintf("sha256:%s", hex.EncodeToString(rawHash[:]))
 		}
-	} else if fl.ComputeDecodedBodyHashAlgorithm != "" {
+
+	case "":
 		log.Panicf("Invalid ComputeDecodedBodyHashAlgorithm choice made it through zflags: %s", scanner.config.ComputeDecodedBodyHashAlgorithm)
 	}
 

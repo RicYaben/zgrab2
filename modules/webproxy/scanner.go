@@ -17,7 +17,6 @@
 package webproxy
 
 import (
-	"encoding/base64"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -25,17 +24,37 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/zmap/zgrab2"
+	"github.com/zmap/zgrab2/lib/http"
 	"github.com/zmap/zgrab2/modules/webproxy/request"
 	"github.com/zmap/zgrab2/modules/webproxy/scan"
 	"github.com/zmap/zgrab2/modules/webproxy/token"
 )
+
+type Flags struct {
+	zgrab2.BaseFlags
+	zgrab2.TLSFlags
+
+	Method    string `long:"method" default:"POST" description:"Set HTTP request method type"`
+	Endpoint  string `long:"endpoint" default:"/" description:"Send an HTTP request to an endpoint"`
+	UserAgent string `long:"user-agent" default:"Mozilla/5.0 zgrab/0.x" description:"Set a custom user agent"`
+
+	MaxSize      int    `long:"max-size" default:"256" description:"Max kilobytes to read in response to an HTTP request"`
+	MaxRedirects int    `long:"max-redirects" default:"0" description:"Max number of redirects to follow"`
+	HmacKey      string `long:"hmac-key" description:"HMAC secret to create and verify JWT identifiers"`
+
+	CustomHeadersNames     string `long:"custom-headers-names" description:"CSV of custom HTTP headers to send to server"`
+	CustomHeadersValues    string `long:"custom-headers-values" description:"CSV of custom HTTP header values to send to server. Should match order of custom-headers-names."`
+	CustomHeadersDelimiter string `long:"custom-headers-delimiter" description:"Delimiter for customer header name/value CSVs"`
+
+	RawHeaders bool `long:"raw-headers" description:"Extract raw response up through headers"`
+}
 
 // Module is an implementation of the zgrab2.Module interface.
 type Module struct{}
 
 // Scanner is the implementation of the zgrab2.Scanner interface.
 type Scanner struct {
-	config     *scan.Flags
+	config     *Flags
 	hmacSecret []byte
 
 	scanBuilder    scan.ScanBuilder
@@ -43,9 +62,19 @@ type Scanner struct {
 	tokenBuilder   token.TokenBuilder
 }
 
+// Validate performs any needed validation on the arguments
+func (flags *Flags) Validate(args []string) error {
+	return nil
+}
+
+// Help returns module-specific help
+func (flags *Flags) Help() string {
+	return ""
+}
+
 // NewFlags returns an empty Flags object.
 func (module *Module) NewFlags() interface{} {
-	return new(scan.Flags)
+	return new(Flags)
 }
 
 // NewScanner returns a new instance Scanner instance.
@@ -79,53 +108,13 @@ func (scanner *Scanner) InitPerSender(senderID int) error {
 }
 
 func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
-	fl, _ := flags.(*scan.Flags)
+	fl, _ := flags.(*Flags)
 	scanner.config = fl
 
 	// Parse the headers
-	if !(len(fl.CustomHeadersNames) > 0 && len(fl.CustomHeadersValues) > 0) {
-		log.Panicf("custom-headers-names and custom-headers-values must be specified if one or the other is provided")
-	}
-
-	namesReader := csv.NewReader(strings.NewReader(fl.CustomHeadersNames))
-	if namesReader == nil {
-		log.Panicf("unable to read custom-headers-names in CSV reader")
-	}
-
-	valuesReader := csv.NewReader(strings.NewReader(fl.CustomHeadersValues))
-	if valuesReader == nil {
-		log.Panicf("unable to read custom-headers-values in CSV reader")
-	}
-
-	headerNames, err := namesReader.Read()
+	headers, err := parseHeadersCSV(fl.CustomHeadersNames, fl.CustomHeadersValues, fl.CustomHeadersDelimiter)
 	if err != nil {
 		return err
-	}
-
-	headerValues, err := valuesReader.Read()
-	if err != nil {
-		return err
-	}
-
-	if len(headerNames) != len(headerValues) {
-		log.Panicf("inconsistent number of HTTP header names and values")
-	}
-
-	// By default, the CSV delimiter will remain a comma unless explicitly specified
-	hDelimiter := fl.CustomHeadersDelimiter
-	if len(hDelimiter) > 1 {
-		log.Panicf("Invalid delimiter custom-header delimiter, must be a single character")
-	} else if hDelimiter != "" {
-		valuesReader.Comma = rune(hDelimiter[0])
-		namesReader.Comma = rune(hDelimiter[0])
-	}
-
-	headers := &request.Headers{}
-	for i, h := range headerNames {
-		hName := strings.ToLower(h)
-		hValue := headerValues[i]
-
-		headers.Set(hName, hValue)
 	}
 
 	// Set the request builder
@@ -141,18 +130,12 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 
 	// Set the token builder
 	if len(fl.HmacKey) == 0 {
-		return fmt.Errorf("HMAC must be included to create JWT identifiers")
-	}
-
-	secret, err := base64.StdEncoding.DecodeString(fl.HmacKey)
-	if err != nil {
-		return fmt.Errorf("failed to decode base64 secret: %w", err)
-	}
-
-	if len(secret) != 32 { // 256 bits
+		return errors.New("HMAC must be included to create JWT identifiers")
+	} else if len(fl.HmacKey) != 32 {
 		return errors.New("invalid secret length: must be 32 bytes (256 bits)")
 	}
 
+	secret := []byte(fl.HmacKey)
 	scanner.hmacSecret = secret
 	tknBuilder := token.NewJWTBuilder(scanner.hmacSecret)
 	scanner.tokenBuilder = tknBuilder
@@ -175,6 +158,10 @@ func (scanner *Scanner) Scan(t zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{
 
 	// Build the scan
 	s := scanner.scanBuilder.Build(t)
+	err = s.Init()
+	if err != nil {
+		return zgrab2.SCAN_UNKNOWN_ERROR, nil, err
+	}
 	defer s.Cleanup()
 
 	// Grab the results
@@ -196,4 +183,51 @@ func RegisterModule() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func parseHeadersCSV(names string, values string, delimiter string) (http.Header, error) {
+
+	if len(names) == 0 && len(values) == 0 {
+		return nil, nil
+	} else if len(names) > 0 || len(values) > 0 {
+		if len(names) == 0 {
+			return nil, fmt.Errorf("names must be specified if values are provided")
+		} else if len(values) == 0 {
+			return nil, fmt.Errorf("values must be specified if names are provided")
+		}
+	}
+
+	// By default, the CSV delimiter will remain a comma unless explicitly specified
+	dlim := ','
+	if len(delimiter) == 1 {
+		dlim = rune(delimiter[0])
+	} else if len(delimiter) > 1 {
+		return nil, fmt.Errorf("invalid delimiter, must be a single character")
+	}
+
+	// Function to parse CSV string into a slice of strings
+	parseCSV := func(data string) ([]string, error) {
+		reader := csv.NewReader(strings.NewReader(data))
+		reader.Comma = dlim
+		return reader.Read()
+	}
+
+	// Parse the input strings
+	hNames, err := parseCSV(names)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing names: %v", err)
+	}
+
+	hValues, err := parseCSV(values)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing values: %v", err)
+	}
+
+	// Create and populate the Headers map
+	headers := make(http.Header)
+	for i, v := range hNames {
+		headers.Set(strings.ToLower(v), hValues[i])
+	}
+
+	return headers, nil
 }

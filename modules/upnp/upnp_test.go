@@ -48,7 +48,7 @@ func (cfg *upnpTester) getScanner() (*Scanner, error) {
 	flags.Method = "M-SEARCH"
 	flags.Man = "ssdp:discover"
 	flags.St = "upnp:rootdevice"
-	flags.UserAgent = "Mozilla/5.0 UPnP/2.0 zgrab/0.1.6"
+	flags.UserAgent = "Mozilla/5.0 UPnP zgrab/0.1.6"
 	flags.Port = uint(cfg.port)
 	flags.Timeout = 1 * time.Second
 

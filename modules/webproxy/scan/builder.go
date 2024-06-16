@@ -30,15 +30,11 @@ type httpProxyScanBuilder struct {
 }
 
 func (builder *httpProxyScanBuilder) setTransport(maxRedirects int, rawHeaders bool) {
-	proxyHeader := new(http.Header)
-	proxyHeader.Add("Proxy-Connection", "close")
-
 	builder.transport = &http.Transport{
 		DisableKeepAlives:  false,
 		DisableCompression: false,
 		MaxIdleConns:       maxRedirects,
 		RawHeaderBuffer:    rawHeaders,
-		ProxyConnectHeader: *proxyHeader,
 	}
 }
 
@@ -49,7 +45,6 @@ func (builder *httpProxyScanBuilder) setClient(userAgent string, timeout time.Du
 		Timeout:   timeout,
 		Transport: builder.transport,
 		Jar:       nil,
-		//CheckRedirect: ,
 	}
 }
 
@@ -58,6 +53,5 @@ func (builder *httpProxyScanBuilder) setMaxSize(maxSize int) {
 }
 
 func (builder *httpProxyScanBuilder) Build(target zgrab2.ScanTarget) Scan {
-	//endpoint := builder.encodeEndpoint(builder.flags.UseHTTPS, builder.flags.Endpoint)
 	return NewHTTPScan(target, builder.client, builder.maxSize)
 }

@@ -7,24 +7,14 @@ import (
 	"github.com/zmap/zgrab2/lib/http"
 )
 
-type Headers map[string]string
-
-func (headers *Headers) Set(key, value string) error {
-	if len(key) > 0 {
-		(*headers)[key] = value
-		return nil
-	}
-	return fmt.Errorf("attempted to set an empty header key")
-}
-
 type HttpRequestBuilder interface {
 	setUrl(url string)
 	setMethod(method string) error
-	setHeaders(headers *Headers)
+	setHeaders(headers http.Header)
 	Build(body string) (*http.Request, error)
 }
 
-func NewHttpRequestBuilder(method, url string, headers *Headers) (HttpRequestBuilder, error) {
+func NewHttpRequestBuilder(method, url string, headers http.Header) (HttpRequestBuilder, error) {
 	builder := new(httpProxyRequestBuilder)
 
 	err := builder.setMethod(method)
@@ -41,7 +31,7 @@ func NewHttpRequestBuilder(method, url string, headers *Headers) (HttpRequestBui
 type httpProxyRequestBuilder struct {
 	method  string
 	url     string
-	headers *Headers
+	headers http.Header
 }
 
 func (builder *httpProxyRequestBuilder) setUrl(url string) {
@@ -63,15 +53,19 @@ func (builder *httpProxyRequestBuilder) setMethod(method string) error {
 	return fmt.Errorf("method not allowed: %s", method)
 }
 
-func (builder *httpProxyRequestBuilder) setHeaders(headers *Headers) {
-	builder.headers = new(Headers)
+func (builder *httpProxyRequestBuilder) setHeaders(headers http.Header) {
+	builder.headers = http.Header{
+		"Accept":           {"*/*"},
+		"Proxy-Connection": {"close"},
+		"Cache-Control":    {"no-store"},
+	}
 
-	// Add common headers always included
-	builder.headers.Set("Accept", "*/*")
-	builder.headers.Set("Proxy-Connection", "close")
+	if headers == nil {
+		return
+	}
 
-	for k, v := range *headers {
-		builder.headers.Set(k, v)
+	for k, v := range headers {
+		builder.headers[k] = v
 	}
 }
 
@@ -90,11 +84,8 @@ func (builder *httpProxyRequestBuilder) Build(body string) (*http.Request, error
 	}
 
 	// Add the headers
-	for k, v := range *builder.headers {
-		req.Header.Set(k, v)
-	}
+	// The constructor does not add any header.
+	req.Header = builder.headers
 
 	return req, nil
 }
-
-type ScanBuilder interface{}

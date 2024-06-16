@@ -18,6 +18,7 @@ import (
 )
 
 type Scan interface {
+	Init() error
 	Grab(*http.Request) *zgrab2.ScanError
 	GetResults() *Results
 	Cleanup()
@@ -39,8 +40,7 @@ type scan struct {
 }
 
 func NewHTTPScan(target zgrab2.ScanTarget, client *http.Client, maxSize int64) Scan {
-
-	s := &scan{
+	return &scan{
 		target: target,
 		client: client,
 		config: &config{
@@ -48,8 +48,6 @@ func NewHTTPScan(target zgrab2.ScanTarget, client *http.Client, maxSize int64) S
 			deadline: time.Now().Add(client.Timeout),
 		},
 	}
-	s.setDialContext()
-	return s
 }
 
 // Attempt to decode the body of a response
@@ -96,13 +94,20 @@ func readBody(contentType string, body io.ReadCloser, maxReadLen int64) (string,
 	return bString, h, nil
 }
 
-func (scan *scan) setDialContext() {
-
+func (scan *scan) Init() error {
 	// Set the dialer
 	transport := scan.client.Transport.(*http.Transport)
-	transport.DialContext = scan.newDialContext
 
-	// TODO: add TLS support
+	addr := fmt.Sprintf("http://%s:%d", scan.target.IP.String(), *scan.target.Port)
+	url, err := url.Parse(addr)
+	if err != nil {
+		return err
+	}
+
+	// Put the proxy and start the dialer
+	transport.Proxy = http.ProxyURL(url)
+	transport.DialContext = scan.newDialContext
+	return nil
 }
 
 // Get a context whose deadline is the earliest of the context's deadline (if it has one) and the

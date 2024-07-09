@@ -144,8 +144,14 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 }
 
 func (scanner *Scanner) Scan(t zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
+	// Assign the port if it does not exist yet
+	if t.Port == nil {
+		t.Port = &scanner.config.BaseFlags.Port
+	}
+
 	// Build the token (body)
-	tkn, err := scanner.tokenBuilder.GenerateToken(t.IP.String())
+	addr := fmt.Sprintf("%s:%d", t.IP.String(), t.Port)
+	tkn, err := scanner.tokenBuilder.GenerateToken(addr)
 	if err != nil {
 		return zgrab2.SCAN_UNKNOWN_ERROR, nil, err
 	}

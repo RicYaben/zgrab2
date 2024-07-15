@@ -14,13 +14,13 @@ import (
 // Populated by the framework.
 type Flags struct {
 	zgrab2.BaseFlags
+	zgrab2.TLSFlags
 
 	Vhost    string `long:"vhost" description:"The vhost to connect to" default:"/"`
 	AuthUser string `long:"auth-user" description:"Username to use for authentication. Must be used with --auth-pass. No auth is attempted if not provided."`
 	AuthPass string `long:"auth-pass" description:"Password to use for authentication. Must be used with --auth-user. No auth is attempted if not provided."`
 
 	UseTLS bool `long:"use-tls" description:"Use TLS to connect to the server. Note that AMQPS uses a different default port (5671) than AMQP (5672) and you will need to specify that port manually with -p."`
-	zgrab2.TLSFlags
 }
 
 // Module implements the zgrab2.Module interface.
@@ -247,7 +247,7 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	if err != amqpLib.ErrSASL && err != amqpLib.ErrCredentials && amqpConn.Config.ChannelMax > 0 {
 		result.AuthSuccess = true
 		result.Tune = &connectionTune{
-			ChannelMax: amqpConn.Config.ChannelMax,
+			ChannelMax: int(amqpConn.Config.ChannelMax),
 			FrameMax:   amqpConn.Config.FrameSize,
 			Heartbeat:  int(amqpConn.Config.Heartbeat.Seconds()),
 		}

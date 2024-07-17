@@ -30,7 +30,7 @@ type Flags struct {
 
 	SubscribeTopics  string        `long:"subscribe-topics" default:"#,$SYS/#" description:"list of topics to subscribe to. Defaults to wildcard all and system."`
 	TopicsSeparator  string        `long:"separator" default:"," description:"subscribe topics separator"`
-	SubscribeTimeout time.Duration `long:"wait" description:"time to accept messages from the subscribed topics"`
+	SubscribeTimeout time.Duration `long:"wait" default:"10s" description:"time to accept messages from the subscribed topics. Defaults to 10 seconds"`
 
 	UserAuth bool   `long:"user-auth" description:"whether to authenticate using a set of credentials"`
 	Username string `long:"username" description:"username to authenticate"`
@@ -258,7 +258,7 @@ func (scanner *Scanner) Scan(t zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{
 // zgrab2 framework.
 func RegisterModule() {
 	var module Module
-	_, err := zgrab2.AddCommand("mqtt", "MQTT Banner Grab", module.Description(), 143, &module)
+	_, err := zgrab2.AddCommand("mqtt", "MQTT Banner Grab", module.Description(), 1883, &module)
 	if err != nil {
 		log.Fatal(err)
 	}

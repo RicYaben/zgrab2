@@ -1,4 +1,4 @@
-module github.com/RicYaben/zgrab2
+module github.com/zmap/zgrab2
 
 go 1.22
 

@@ -63,7 +63,7 @@ func (module *Module) Description() string {
 
 // A Results object returned from the MQTT module's Scanner.Scan().
 type Results struct {
-	topics map[string][]string
+	Topics map[string][]string `json:"topics,omitempty"`
 }
 
 // scan holds the state for a single scan. This may entail multiple connections.
@@ -72,7 +72,7 @@ type scan struct {
 	scanner *Scanner
 	target  *zgrab2.ScanTarget
 	client  paho.Client
-	results *Results
+	results Results
 	tls     bool
 }
 
@@ -169,9 +169,9 @@ func (scan *scan) Grab() *zgrab2.ScanError {
 
 	for m := range msgs {
 		// handle here to addd the results to the scan
-		msgs := scan.results.topics[m.Topic()]
+		msgs := scan.results.Topics[m.Topic()]
 		msgs = append(msgs, string(m.Payload()))
-		scan.results.topics[m.Topic()] = msgs
+		scan.results.Topics[m.Topic()] = msgs
 	}
 
 	return nil
@@ -217,8 +217,8 @@ func (scanner *Scanner) newMQTTScan(t *zgrab2.ScanTarget, tls bool) (*scan, erro
 	ret := &scan{
 		scanner: scanner,
 		target:  t,
-		results: &Results{
-			topics: make(map[string][]string),
+		results: Results{
+			Topics: make(map[string][]string),
 		},
 		tls: tls,
 	}

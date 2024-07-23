@@ -1,9 +1,12 @@
 package zgrab2
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
+	"slices"
+	"strings"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
@@ -22,7 +25,7 @@ type Grab struct {
 type ScanTarget struct {
 	IP     net.IP
 	Domain string
-	Tag    string
+	Tags   string
 	Port   *uint
 }
 
@@ -38,8 +41,8 @@ func (target ScanTarget) String() string {
 	} else {
 		res = target.Domain
 	}
-	if target.Tag != "" {
-		res += " tag:" + target.Tag
+	if target.Tags != "" {
+		res += " tag:" + target.Tags
 	}
 	return res
 }
@@ -85,13 +88,8 @@ func (target *ScanTarget) OpenTLS(baseFlags *BaseFlags, tlsFlags *TLSFlags) (*TL
 // OpenUDP connects to the ScanTarget using the configured flags, and returns a net.Conn that uses the configured timeouts for Read/Write operations.
 // Note that the UDP "connection" does not have an associated timeout.
 func (target *ScanTarget) OpenUDP(flags *BaseFlags, udp *UDPFlags) (net.Conn, error) {
-	var port uint
-	// If the port is supplied in ScanTarget, let that override the cmdline option
-	if target.Port != nil {
-		port = *target.Port
-	} else {
-		port = flags.Port
-	}
+	var port uint = *target.Port | flags.Port
+
 	address := net.JoinHostPort(target.Host(), fmt.Sprintf("%d", port))
 	var local *net.UDPAddr
 	if udp != nil && (udp.LocalAddress != "" || udp.LocalPort != 0) {
@@ -103,6 +101,7 @@ func (target *ScanTarget) OpenUDP(flags *BaseFlags, udp *UDPFlags) (net.Conn, er
 			local.Port = int(udp.LocalPort)
 		}
 	}
+
 	remote, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
 		return nil, err
@@ -111,7 +110,7 @@ func (target *ScanTarget) OpenUDP(flags *BaseFlags, udp *UDPFlags) (net.Conn, er
 	if err != nil {
 		return nil, err
 	}
-	return NewTimeoutConnection(nil, conn, flags.Timeout, 0, 0, flags.BytesReadLimit), nil
+	return NewTimeoutConnection(context.Background(), conn, flags.Timeout, 0, 0, flags.BytesReadLimit), nil
 }
 
 // BuildGrabFromInputResponse constructs a Grab object for a target, given the
@@ -135,34 +134,48 @@ func BuildGrabFromInputResponse(t *ScanTarget, responses map[string]ScanResponse
 
 // EncodeGrab serializes a Grab to JSON, handling the debug fields if necessary.
 func EncodeGrab(raw *Grab, includeDebug bool) ([]byte, error) {
-	var outputData interface{}
 	if includeDebug {
-		outputData = raw
-	} else {
-		// If the caller doesn't explicitly request debug data, strip it out.
-		// TODO: Migrate this to the ZMap fork of sheriff, once it's more
-		// stable.
-		processor := output.Processor{Verbose: false}
-		stripped, err := processor.Process(raw)
-		if err != nil {
-			log.Debugf("Error processing results: %v", err)
-			stripped = raw
-		}
-		outputData = stripped
+		return json.Marshal(raw)
 	}
-	return json.Marshal(outputData)
+	// If the caller doesn't explicitly request debug data, strip it out.
+	// TODO: Migrate this to the ZMap fork of sheriff, once it's more
+	// stable.
+	processor := output.Processor{Verbose: false}
+	stripped, err := processor.Process(raw)
+	if err != nil {
+		log.Debugf("Error processing results: %v", err)
+		stripped = raw
+	}
+	return json.Marshal(stripped)
+}
+
+func parseTags(rawTags string, delimiter string) []string {
+	if len(rawTags) == 0 {
+		return []string{}
+	}
+
+	if len(delimiter) == 0 {
+		delimiter = string(rune(','))
+	}
+
+	return strings.Split(rawTags, delimiter)
 }
 
 // grabTarget calls handler for each action
 func grabTarget(input ScanTarget, m *Monitor) []byte {
 	moduleResult := make(map[string]ScanResponse)
 
+	// TODO: we are choosing the delimiter here. This should be a flag
+	tags := parseTags(input.Tags, ",")
+
 	for _, scannerName := range orderedScanners {
 		scanner := scanners[scannerName]
 		trigger := (*scanner).GetTrigger()
-		if input.Tag != trigger {
+
+		if !slices.Contains(tags, trigger) {
 			continue
 		}
+
 		defer func(name string) {
 			if e := recover(); e != nil {
 				log.Errorf("Panic on scanner %s when scanning target %s: %#v", scannerName, input.String(), e)

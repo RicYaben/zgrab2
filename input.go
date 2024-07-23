@@ -128,9 +128,9 @@ func GetTargetsCSV(source io.Reader, ch chan<- ScanTarget) error {
 				// expand CIDR block into one target for each IP
 				for ip = ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); incrementIP(ip) {
 					if port == "" {
-						ch <- ScanTarget{IP: duplicateIP(ip), Domain: domain, Tag: tag}
+						ch <- ScanTarget{IP: duplicateIP(ip), Domain: domain, Tags: tag}
 					} else {
-						ch <- ScanTarget{IP: duplicateIP(ip), Domain: domain, Tag: tag, Port: &port_uint}
+						ch <- ScanTarget{IP: duplicateIP(ip), Domain: domain, Tags: tag, Port: &port_uint}
 					}
 				}
 				continue
@@ -139,9 +139,9 @@ func GetTargetsCSV(source io.Reader, ch chan<- ScanTarget) error {
 			}
 		}
 		if port == "" {
-			ch <- ScanTarget{IP: ip, Domain: domain, Tag: tag}
+			ch <- ScanTarget{IP: ip, Domain: domain, Tags: tag}
 		} else {
-			ch <- ScanTarget{IP: ip, Domain: domain, Tag: tag, Port: &port_uint}
+			ch <- ScanTarget{IP: ip, Domain: domain, Tags: tag, Port: &port_uint}
 		}
 	}
 	return nil

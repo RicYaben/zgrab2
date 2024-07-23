@@ -175,16 +175,16 @@ example.com
 `
 	port := uint(443)
 	expected := []ScanTarget{
-		ScanTarget{IP: net.ParseIP("10.0.0.1"), Domain: "example.com", Tag: "tag"},
+		ScanTarget{IP: net.ParseIP("10.0.0.1"), Domain: "example.com", Tags: "tag"},
 		ScanTarget{IP: net.ParseIP("10.0.0.1"), Domain: "example.com"},
 		ScanTarget{IP: net.ParseIP("10.0.0.1")},
 		ScanTarget{Domain: "example.com"},
 		ScanTarget{Domain: "example.com"},
-		ScanTarget{IP: net.ParseIP("2.2.2.0"), Tag: "tag"},
-		ScanTarget{IP: net.ParseIP("2.2.2.1"), Tag: "tag"},
-		ScanTarget{IP: net.ParseIP("2.2.2.2"), Tag: "tag"},
-		ScanTarget{IP: net.ParseIP("2.2.2.3"), Tag: "tag"},
-		ScanTarget{IP: net.ParseIP("10.0.0.1"), Domain: "example.com", Tag: "tag", Port: &port},
+		ScanTarget{IP: net.ParseIP("2.2.2.0"), Tags: "tag"},
+		ScanTarget{IP: net.ParseIP("2.2.2.1"), Tags: "tag"},
+		ScanTarget{IP: net.ParseIP("2.2.2.2"), Tags: "tag"},
+		ScanTarget{IP: net.ParseIP("2.2.2.3"), Tags: "tag"},
+		ScanTarget{IP: net.ParseIP("10.0.0.1"), Domain: "example.com", Tags: "tag", Port: &port},
 		ScanTarget{IP: net.ParseIP("10.0.0.1"), Port: &port},
 	}
 
@@ -208,7 +208,7 @@ example.com
 	for i := range expected {
 		if res[i].IP.String() != expected[i].IP.String() ||
 			res[i].Domain != expected[i].Domain ||
-			res[i].Tag != expected[i].Tag {
+			res[i].Tags != expected[i].Tags {
 			t.Errorf("wrong data in ScanTarget %d (got %v; expected %v)", i, res[i], expected[i])
 		}
 	}

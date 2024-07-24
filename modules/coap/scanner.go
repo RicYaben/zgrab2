@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/zmap/zgrab2"
 )
@@ -102,6 +103,11 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 		return err
 	}
 	scanner.paths = paths
+
+	if fl.Timeout <= 0 {
+		fl.Timeout = 10 * time.Second
+	}
+
 	scanner.probe = newProbeBuilder(fl.Timeout)
 
 	return nil
@@ -139,9 +145,9 @@ func (scanner *Scanner) Scan(t zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{
 	scan := scanner.newCoAPscan(&t)
 	err := scan.Grab()
 	if err != nil {
-		return err.Unpack(&scan.results)
+		return err.Unpack(scan.results)
 	}
-	return zgrab2.SCAN_SUCCESS, &scan.results, nil
+	return zgrab2.SCAN_SUCCESS, scan.results, nil
 }
 
 // RegisterModule is called by modules/coap.go to register this module with the

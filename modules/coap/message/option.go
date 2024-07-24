@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 )
 
@@ -99,32 +100,31 @@ var optionDefinitions = map[uint16]OptDef{
 
 type Options map[uint16]*Option
 
-func (o *Options) Unmarshal(buf *bytes.Buffer) (err error) {
+func (o *Options) Unmarshal(buf *bytes.Buffer) error {
 	prevOpt := 0
 	for buf.Len() > 0 {
 		b, err := buf.ReadByte()
 		if err == io.EOF {
-			break
+			return err
 		}
 
 		delta, length := int(b>>4), int(b&0x0F)
 		if delta == 0x0F && length == 0x0F {
-			break
+			return fmt.Errorf("invalid delta")
 		}
 
 		delta, err = o.parseExtOpt(buf, delta)
 		if err != nil {
-			break
+			return err
 		}
 
 		length, err = o.parseExtOpt(buf, length)
 		if err != nil {
-			break
+			return err
 		}
 
 		if buf.Len() < length {
-			err = ErrSmallBuffer
-			break
+			return ErrSmallBuffer
 		}
 		data := buf.Next(length)
 		optID := prevOpt + delta

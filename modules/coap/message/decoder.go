@@ -6,9 +6,9 @@ import (
 )
 
 const (
-	OptionBlock1        = 27 // CoAP Block1 Option Number
-	OptionBlock2        = 23 // CoAP Block2 Option Number
-	OptionContentFormat = 12 // CoAP Content-Format Option Number
+	OptionBlock1        uint16 = 27 // CoAP Block1 Option Number
+	OptionBlock2        uint16 = 23 // CoAP Block2 Option Number
+	OptionContentFormat uint16 = 12 // CoAP Content-Format Option Number
 )
 
 var (
@@ -43,12 +43,14 @@ func (d *decoder) Decode(data []byte, msg *Message) error {
 	}
 	msg.Options = opts
 
-	var payload = new(Payload)
-	cType := uint16(opts[OptionContentFormat].Value[0])
-	if err := payload.Unmarshal(buf, cType); err != nil {
-		return err
+	if cOpt, ok := opts[OptionContentFormat]; ok {
+		var payload = new(Payload)
+		cType := uint16(cOpt.Value[0])
+		if err := payload.Unmarshal(buf, cType); err != nil {
+			return err
+		}
+		msg.Payload = payload
 	}
-	msg.Payload = payload
 
 	for _, oID := range []uint16{OptionBlock1, OptionBlock2} {
 		if opt, ok := opts[oID]; ok {

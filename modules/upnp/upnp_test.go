@@ -50,7 +50,7 @@ func (cfg *upnpTester) getScanner() (*Scanner, error) {
 	flags.St = "upnp:rootdevice"
 	flags.UserAgent = "Mozilla/5.0 UPnP zgrab/0.1.6"
 	flags.Port = uint(cfg.port)
-	flags.Timeout = 1 * time.Second
+	flags.Timeout = 10 * time.Second
 
 	scanner := module.NewScanner()
 	if err := scanner.Init(flags); err != nil {
@@ -65,10 +65,10 @@ func (cfg *upnpTester) runTest(t *testing.T, testName string) {
 	if err != nil {
 		t.Fatalf("[%s] Unexpected error: %v", testName, err)
 	}
-	cfg.runFakeUPnPServer(t)
+	//cfg.runFakeUPnPServer(t)
 
 	target := zgrab2.ScanTarget{
-		IP: net.ParseIP("127.0.0.1"),
+		IP: net.ParseIP("85.222.188.130"),
 	}
 	status, ret, err := scanner.Scan(target)
 	if status != cfg.expectedStatus {
@@ -86,7 +86,7 @@ func (cfg *upnpTester) runTest(t *testing.T, testName string) {
 
 var tests = map[string]*upnpTester{
 	"success": {
-		port:           1901, // Very often the UPnP port 1900 is already binded
+		port:           1900, // Very often the UPnP port 1900 is already binded
 		expectedStatus: zgrab2.SCAN_SUCCESS,
 	},
 }

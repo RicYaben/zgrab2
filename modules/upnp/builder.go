@@ -9,11 +9,11 @@ import (
 	"bytes"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/zmap/zgrab2/lib/http"
 	"golang.org/x/exp/slices"
 )
 

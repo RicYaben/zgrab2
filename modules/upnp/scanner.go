@@ -1,7 +1,7 @@
 package upnp
 
 import (
-	"net/http"
+	"github.com/zmap/zgrab2/lib/http"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/zmap/zgrab2"

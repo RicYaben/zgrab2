@@ -11,8 +11,8 @@ import (
 )
 
 type Result struct {
-	path     string
-	messages []*message.Message
+	Path     string             `json:"path"`
+	Messages []*message.Message `json:"messages"`
 }
 
 type Probe struct {
@@ -32,8 +32,8 @@ func (p *Probe) Do(path string) *zgrab2.ScanError {
 	}
 
 	res := &Result{
-		path:     path,
-		messages: msgs,
+		Path:     path,
+		Messages: msgs,
 	}
 	p.results = append(p.results, res)
 	return nil

@@ -79,7 +79,7 @@ type Scanner struct {
 
 // Protocol returns the protocol identifer for the scanner.
 func (scanner *Scanner) Protocol() string {
-	return "mqtt"
+	return "coap"
 }
 
 // Init initializes the Scanner.
@@ -145,9 +145,9 @@ func (scanner *Scanner) Scan(t zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{
 	scan := scanner.newCoAPscan(&t)
 	err := scan.Grab()
 	if err != nil {
-		return err.Unpack(scan.results)
+		return err.Unpack(&scan.results)
 	}
-	return zgrab2.SCAN_SUCCESS, scan.results, nil
+	return zgrab2.SCAN_SUCCESS, &scan.results, nil
 }
 
 // RegisterModule is called by modules/coap.go to register this module with the

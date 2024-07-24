@@ -45,7 +45,11 @@ func (d *decoder) Decode(data []byte, msg *Message) error {
 
 	if cOpt, ok := opts[OptionContentFormat]; ok {
 		var payload = new(Payload)
-		cType := uint16(cOpt.Value[0])
+
+		cType := uint16(0)
+		if len(cOpt.Value) > 0 {
+			cType = uint16(cOpt.Value[0])
+		}
 		if err := payload.Unmarshal(buf, cType); err != nil {
 			return err
 		}

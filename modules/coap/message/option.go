@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 )
 
@@ -105,12 +104,12 @@ func (o *Options) Unmarshal(buf *bytes.Buffer) error {
 	for buf.Len() > 0 {
 		b, err := buf.ReadByte()
 		if err == io.EOF {
-			return err
+			break // end of file
 		}
 
 		delta, length := int(b>>4), int(b&0x0F)
 		if delta == 0x0F && length == 0x0F {
-			return fmt.Errorf("invalid delta")
+			break // end of message
 		}
 
 		delta, err = o.parseExtOpt(buf, delta)

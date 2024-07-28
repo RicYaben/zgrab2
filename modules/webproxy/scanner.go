@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/zmap/zgrab2"
@@ -118,6 +119,9 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	}
 
 	// Set the request builder
+	if fl.Method == "" {
+		fl.Method = "POST"
+	}
 	reqBuilder, err := request.NewHttpRequestBuilder(fl.Method, fl.Endpoint, headers)
 	if err != nil {
 		return err
@@ -125,6 +129,10 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	scanner.requestBuilder = reqBuilder
 
 	// Set the scan builder
+	if fl.Timeout == 0 {
+		fl.Timeout = 10 * time.Second
+	}
+
 	scanBuilder := scan.NewProxyHttpScanBuilder(fl.MaxRedirects, fl.RawHeaders, fl.UserAgent, fl.Timeout, fl.MaxSize)
 	scanner.scanBuilder = scanBuilder
 

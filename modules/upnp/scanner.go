@@ -153,6 +153,7 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	}
 
 	ret.Response = resp
-	// [4/3/2024] TODO: Handle the different HTTP status and parse the response somehow?
+	// [4/3/2024] TODO: Handle the different HTTP status?
+	// We may want to parse the location and send requests to all these places
 	return zgrab2.SCAN_SUCCESS, ret, nil
 }

@@ -42,7 +42,7 @@ type Flags struct {
 	MaxSize      int    `long:"max-size" default:"256" description:"Max kilobytes to read in response to an HTTP request"`
 	MaxRedirects int    `long:"max-redirects" default:"0" description:"Max number of redirects to follow"`
 	HmacKey      string `long:"hmac-key" description:"HMAC secret to create and verify JWT identifiers"`
-	SlugToken    bool   `long:"slug-token" default:"true" description:"Use the JWT as a parameter in the request. E.g.: <endopint>/scan?token=<token>"`
+	SlugToken    bool   `long:"slug-token" description:"Use the JWT as a parameter in the request. E.g.: <endopint>/scan?token=<token>"`
 
 	CustomHeadersNames     string `long:"custom-headers-names" description:"CSV of custom HTTP headers to send to server"`
 	CustomHeadersValues    string `long:"custom-headers-values" description:"CSV of custom HTTP header values to send to server. Should match order of custom-headers-names."`

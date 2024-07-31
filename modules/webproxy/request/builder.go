@@ -2,6 +2,8 @@ package request
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 
 	"github.com/zmap/zgrab2/lib/http"
@@ -14,7 +16,7 @@ type HttpRequestBuilder interface {
 	Build(body string) (*http.Request, error)
 }
 
-func NewHttpRequestBuilder(method, url string, headers http.Header) (HttpRequestBuilder, error) {
+func NewHttpRequestBuilder(method, url string, headers http.Header, slug bool) (HttpRequestBuilder, error) {
 	builder := new(httpProxyRequestBuilder)
 
 	err := builder.setMethod(method)
@@ -24,22 +26,45 @@ func NewHttpRequestBuilder(method, url string, headers http.Header) (HttpRequest
 
 	builder.setUrl(url)
 	builder.setHeaders(headers)
+	builder.setSlugToken(slug)
 
 	return builder, nil
 }
 
 type httpProxyRequestBuilder struct {
 	method  string
-	url     string
+	url     *url.URL
 	headers http.Header
+	slug    bool
 }
 
-func (builder *httpProxyRequestBuilder) setUrl(url string) {
-	if len(url) > 0 {
-		builder.url = fmt.Sprintf("http://%s", url)
-		return
+func (builder *httpProxyRequestBuilder) setUrl(uri string) {
+	u, err := url.Parse(uri)
+	if err != nil {
+		host, port, err := net.SplitHostPort(uri)
+		if err != nil {
+			// If SplitHostPort fails, it might be because there is no port
+			host = uri
+			port = "80"
+		}
+
+		// Attempt to handle input as a plain host (domain or IP without scheme)
+		if ip := net.ParseIP(host); ip == nil {
+			panic("uri %s not a valid address")
+		}
+		u = &url.URL{Host: net.JoinHostPort(host, port)}
 	}
-	builder.url = "/"
+
+	if u.Scheme == "" {
+		u.Scheme = "http" // Default scheme if none is provided
+	}
+
+	builder.url = u
+}
+
+func (builder *httpProxyRequestBuilder) setSlugToken(slug bool) *httpProxyRequestBuilder {
+	builder.slug = slug
+	return builder
 }
 
 func (builder *httpProxyRequestBuilder) setMethod(method string) error {
@@ -69,16 +94,24 @@ func (builder *httpProxyRequestBuilder) setHeaders(headers http.Header) {
 	}
 }
 
-func (builder *httpProxyRequestBuilder) Build(body string) (*http.Request, error) {
+func (builder *httpProxyRequestBuilder) Build(token string) (*http.Request, error) {
 
 	// Add the body
 	var b *strings.Reader
-	if len(body) > 0 {
-		b = strings.NewReader(body)
+	if len(token) > 0 {
+		b = strings.NewReader(token)
+	}
+
+	// Slug token if needed
+	uri := builder.url
+	if builder.slug {
+		q := uri.Query()
+		q.Add("token", token)
+		uri.RawQuery = q.Encode()
 	}
 
 	// Create the request
-	req, err := http.NewRequest(builder.method, builder.url, b)
+	req, err := http.NewRequest(builder.method, uri.String(), b)
 	if err != nil {
 		return nil, err
 	}

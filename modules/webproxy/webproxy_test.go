@@ -19,6 +19,7 @@ type webproxyTester struct {
 	laddress string
 	hmackey  string
 	bChan    chan string
+	slug     bool
 }
 
 func (cfg *webproxyTester) runHTTPServer(t *testing.T) {
@@ -49,6 +50,7 @@ func (cfg *webproxyTester) getScanner() (*Scanner, error) {
 	flags.Timeout = 5 * time.Second
 	flags.Endpoint = fmt.Sprintf("%s:%d", cfg.laddress, cfg.lport)
 	flags.HmacKey = cfg.hmackey
+	//flags.SlugToken = cfg.slug
 
 	scanner := module.NewScanner()
 	if err := scanner.Init(flags); err != nil {
@@ -99,12 +101,13 @@ func (cfg *webproxyTester) runTest(t *testing.T, testName string) {
 
 var tests = map[string]*webproxyTester{
 	"success": {
-		paddress: "192.168.0.1",
-		laddress: "127.0.0.1",
+		paddress: "10.176.21.85",
+		laddress: "10.176.21.141",
 		pport:    8080,
 		lport:    8081,
 		bChan:    make(chan string, 1),
 		hmackey:  "gz13WcqhVBy09Mnw7ZZYNCqqlWvyRfJx",
+		slug:     true,
 	},
 }
 

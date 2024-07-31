@@ -42,6 +42,7 @@ type Flags struct {
 	MaxSize      int    `long:"max-size" default:"256" description:"Max kilobytes to read in response to an HTTP request"`
 	MaxRedirects int    `long:"max-redirects" default:"0" description:"Max number of redirects to follow"`
 	HmacKey      string `long:"hmac-key" description:"HMAC secret to create and verify JWT identifiers"`
+	SlugToken    bool   `long:"slug-token" default:"true" description:"Use the JWT as a parameter in the request. E.g.: <endopint>/scan?token=<token>"`
 
 	CustomHeadersNames     string `long:"custom-headers-names" description:"CSV of custom HTTP headers to send to server"`
 	CustomHeadersValues    string `long:"custom-headers-values" description:"CSV of custom HTTP header values to send to server. Should match order of custom-headers-names."`
@@ -122,7 +123,12 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	if fl.Method == "" {
 		fl.Method = "POST"
 	}
-	reqBuilder, err := request.NewHttpRequestBuilder(fl.Method, fl.Endpoint, headers)
+
+	if len(fl.Endpoint) == 0 {
+		return fmt.Errorf("must include flag endpoint")
+	}
+
+	reqBuilder, err := request.NewHttpRequestBuilder(fl.Method, fl.Endpoint, headers, fl.SlugToken)
 	if err != nil {
 		return err
 	}
@@ -158,7 +164,7 @@ func (scanner *Scanner) Scan(t zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{
 	}
 
 	// Build the token (body)
-	addr := fmt.Sprintf("%s:%d", t.IP.String(), t.Port)
+	addr := fmt.Sprintf("%s:%d", t.IP.String(), *t.Port)
 	tkn, err := scanner.tokenBuilder.GenerateToken(addr)
 	if err != nil {
 		return zgrab2.SCAN_UNKNOWN_ERROR, nil, err

@@ -95,30 +95,21 @@ func (builder *httpProxyRequestBuilder) setHeaders(headers http.Header) {
 }
 
 func (builder *httpProxyRequestBuilder) Build(token string) (*http.Request, error) {
-
-	// Add the body
-	var b *strings.Reader
-	if len(token) > 0 {
-		b = strings.NewReader(token)
+	// Create the request
+	req, err := http.NewRequest(builder.method, builder.url.String(), strings.NewReader(token))
+	if err != nil {
+		return nil, err
 	}
 
 	// Slug token if needed
-	uri := builder.url
 	if builder.slug {
-		q := uri.Query()
+		q := req.URL.Query()
 		q.Add("token", token)
-		uri.RawQuery = q.Encode()
-	}
-
-	// Create the request
-	req, err := http.NewRequest(builder.method, uri.String(), b)
-	if err != nil {
-		return nil, err
+		req.URL.RawQuery = q.Encode()
 	}
 
 	// Add the headers
 	// The constructor does not add any header.
 	req.Header = builder.headers
-
 	return req, nil
 }

@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt"
 	"github.com/zmap/zgrab2"
+	"github.com/zmap/zgrab2/lib/http"
+	"github.com/zmap/zgrab2/modules/webproxy/request"
 )
 
 type webproxyTester struct {
@@ -72,6 +73,7 @@ func (cfg *webproxyTester) runTest(t *testing.T, testName string) {
 
 	// Run the server and start the scan
 	go cfg.runHTTPServer(t)
+
 	_, _, err = scanner.Scan(target)
 	if err != nil {
 		t.Fatalf("[%s] error while sending: %v", testName, err)
@@ -102,12 +104,11 @@ func (cfg *webproxyTester) runTest(t *testing.T, testName string) {
 var tests = map[string]*webproxyTester{
 	"success": {
 		paddress: "10.176.21.85",
-		laddress: "10.176.21.141",
+		laddress: "10.253.211.188",
 		pport:    8080,
 		lport:    8081,
 		bChan:    make(chan string, 1),
 		hmackey:  "gz13WcqhVBy09Mnw7ZZYNCqqlWvyRfJx",
-		slug:     true,
 	},
 }
 
@@ -134,5 +135,23 @@ var tests = map[string]*webproxyTester{
 func TestProxy(t *testing.T) {
 	for tname, cfg := range tests {
 		cfg.runTest(t, tname)
+	}
+}
+
+func TestRequestBuilder(t *testing.T) {
+	b, err := request.NewHttpRequestBuilder("POST", "localhost:8080", http.Header{"cookie": {"123test"}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var times = 3
+	for range times {
+		r, err := b.Build("123test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.URL.RawQuery != "token=123test" {
+			t.Fatalf("unexpected query: %s", r.URL.RawQuery)
+		}
 	}
 }

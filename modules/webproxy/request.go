@@ -1,44 +1,35 @@
-package request
+package webproxy
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/zmap/zgrab2/lib/http"
 )
 
-type HttpRequestBuilder interface {
-	setUrl(url string)
-	setMethod(method string) error
-	setHeaders(headers http.Header)
-	Build(body string) (*http.Request, error)
-}
-
-func NewHttpRequestBuilder(method, url string, headers http.Header, slug bool) (HttpRequestBuilder, error) {
-	builder := new(httpProxyRequestBuilder)
-
-	err := builder.setMethod(method)
-	if err != nil {
-		return nil, err
+func NewRequestBuilder(method, url string, slug bool, headers http.Header) *RequestBuilder {
+	b := &RequestBuilder{
+		slug: slug,
 	}
 
-	builder.setUrl(url)
-	builder.setHeaders(headers)
-	builder.setSlugToken(slug)
-
-	return builder, nil
+	b.SetMethod(method)
+	b.SetEndpoint(url)
+	b.SetHeaders(headers)
+	return b
 }
 
-type httpProxyRequestBuilder struct {
+type RequestBuilder struct {
 	method  string
 	url     *url.URL
 	headers http.Header
 	slug    bool
 }
 
-func (builder *httpProxyRequestBuilder) setUrl(uri string) {
+func (b *RequestBuilder) SetEndpoint(uri string) *RequestBuilder {
 	u, err := url.Parse(uri)
 	if err != nil {
 		host, port, err := net.SplitHostPort(uri)
@@ -50,35 +41,41 @@ func (builder *httpProxyRequestBuilder) setUrl(uri string) {
 
 		// Attempt to handle input as a plain host (domain or IP without scheme)
 		if ip := net.ParseIP(host); ip == nil {
-			panic("uri %s not a valid address")
+			log.Fatalf("uri %s not a valid address", host)
 		}
 		u = &url.URL{Host: net.JoinHostPort(host, port)}
 	}
 
 	if u.Scheme == "" {
-		u.Scheme = "http" // Default scheme if none is provided
+		u.Scheme = "http"
 	}
 
-	builder.url = u
+	b.url = u
+	return b
 }
 
-func (builder *httpProxyRequestBuilder) setSlugToken(slug bool) *httpProxyRequestBuilder {
-	builder.slug = slug
-	return builder
+func (b *RequestBuilder) SetParams(slug bool) *RequestBuilder {
+	b.slug = slug
+	return b
 }
 
-func (builder *httpProxyRequestBuilder) setMethod(method string) error {
+func (b *RequestBuilder) SetMethod(method string) *RequestBuilder {
 	allowed := []string{"GET", "POST"} // This is sufficient for proxies
-	for _, val := range allowed {
-		if val == method {
-			builder.method = method
-			return nil
-		}
+
+	// Set the request builder
+	if len(method) == 0 {
+		b.method = "POST"
+		return b
 	}
-	return fmt.Errorf("method not allowed: %s", method)
+
+	if !slices.Contains(allowed, method) {
+		panic(fmt.Errorf("method not allowed: %s", method))
+	}
+	b.method = method
+	return b
 }
 
-func (builder *httpProxyRequestBuilder) setHeaders(headers http.Header) {
+func (builder *RequestBuilder) SetHeaders(headers http.Header) {
 	builder.headers = http.Header{
 		"Accept":           {"*/*"},
 		"Proxy-Connection": {"close"},
@@ -94,7 +91,7 @@ func (builder *httpProxyRequestBuilder) setHeaders(headers http.Header) {
 	}
 }
 
-func (builder *httpProxyRequestBuilder) Build(token string) (*http.Request, error) {
+func (builder *RequestBuilder) Build(token string) (*http.Request, error) {
 	// Create the request
 	req, err := http.NewRequest(builder.method, builder.url.String(), strings.NewReader(token))
 	if err != nil {

@@ -21,14 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/zmap/zgrab2"
 	"github.com/zmap/zgrab2/lib/http"
-	"github.com/zmap/zgrab2/modules/webproxy/request"
-	"github.com/zmap/zgrab2/modules/webproxy/scan"
-	"github.com/zmap/zgrab2/modules/webproxy/token"
 )
 
 type Flags struct {
@@ -48,7 +44,26 @@ type Flags struct {
 	CustomHeadersValues    string `long:"custom-headers-values" description:"CSV of custom HTTP header values to send to server. Should match order of custom-headers-names."`
 	CustomHeadersDelimiter string `long:"custom-headers-delimiter" description:"Delimiter for customer header name/value CSVs"`
 
+	UseTLS   bool `long:"use-tls" description:"Perform an HTTPS connection on the initial host"`
+	RetryTLS bool `long:"retry-tls" description:"If the initial request fails, reconnect and try with HTTPS."`
+
+	// TODO: not implemented yet!
+	//UseSOCKS   bool `long:"use-tls" description:"Perform a SOCKS connection on the initial host"`
+	//RetrySOCKS bool `long:"retry-socks" description:"If the initial request fails, reconnect and try with SOCKS."`
+
 	RawHeaders bool `long:"raw-headers" description:"Extract raw response up through headers"`
+}
+
+type Results struct {
+	// Result is the final HTTP response in the RedirectResponseChain
+	Response *http.Response `json:"response,omitempty"`
+
+	// RedirectResponseChain is non-empty is the scanner follows a redirect.
+	// It contains all redirect response prior to the final response.
+	RedirectResponseChain []*http.Response `json:"redirect_response_chain,omitempty"`
+
+	Token  string `json:"token"`
+	Target string `json:"target"`
 }
 
 // Module is an implementation of the zgrab2.Module interface.
@@ -59,9 +74,9 @@ type Scanner struct {
 	config     *Flags
 	hmacSecret []byte
 
-	scanBuilder    scan.ScanBuilder
-	requestBuilder request.HttpRequestBuilder
-	tokenBuilder   token.TokenBuilder
+	scanBuilder    *ScanBuilder
+	requestBuilder *RequestBuilder
+	tokenBuilder   *JWTTokenBuilder
 }
 
 // Validate performs any needed validation on the arguments
@@ -119,27 +134,15 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 		return err
 	}
 
-	// Set the request builder
-	if fl.Method == "" {
-		fl.Method = "POST"
-	}
-
-	if len(fl.Endpoint) == 0 {
-		return fmt.Errorf("must include flag endpoint")
-	}
-
-	reqBuilder, err := request.NewHttpRequestBuilder(fl.Method, fl.Endpoint, headers, fl.SlugToken)
-	if err != nil {
-		return err
-	}
+	reqBuilder := NewRequestBuilder(
+		fl.Method,
+		fl.Endpoint,
+		fl.SlugToken,
+		headers,
+	)
 	scanner.requestBuilder = reqBuilder
 
-	// Set the scan builder
-	if fl.Timeout == 0 {
-		fl.Timeout = 10 * time.Second
-	}
-
-	scanBuilder := scan.NewProxyHttpScanBuilder(fl.MaxRedirects, fl.RawHeaders, fl.UserAgent, fl.Timeout, fl.MaxSize)
+	scanBuilder := NewScanBuilder(scanner)
 	scanner.scanBuilder = scanBuilder
 
 	// Set the token builder
@@ -151,47 +154,30 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 
 	secret := []byte(fl.HmacKey)
 	scanner.hmacSecret = secret
-	tknBuilder := token.NewJWTBuilder(scanner.hmacSecret)
+	tknBuilder := NewJWTBuilder(scanner.hmacSecret)
 	scanner.tokenBuilder = tknBuilder
 
 	return nil
 }
 
 func (scanner *Scanner) Scan(t zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
-	// Assign the port if it does not exist yet
-	if t.Port == nil {
-		t.Port = &scanner.config.BaseFlags.Port
-	}
+	scan := scanner.scanBuilder.Build(&t, scanner.config.UseTLS)
+	defer scan.Cleanup()
 
-	// Build the token (body)
-	addr := fmt.Sprintf("%s:%d", t.IP.String(), *t.Port)
-	tkn, err := scanner.tokenBuilder.GenerateToken(addr)
-	if err != nil {
-		return zgrab2.SCAN_UNKNOWN_ERROR, nil, err
-	}
+	if err := scan.Grab(); err != nil {
+		if scanner.config.RetryTLS && !scanner.config.UseTLS {
+			scan.Cleanup()
+			retry := scanner.scanBuilder.Build(&t, true)
+			defer retry.Cleanup()
 
-	// Build the request
-	req, err := scanner.requestBuilder.Build(tkn)
-	if err != nil {
-		return zgrab2.SCAN_UNKNOWN_ERROR, nil, err
+			if rErr := retry.Grab(); rErr != nil {
+				return rErr.Unpack(scan.Results)
+			}
+			return zgrab2.SCAN_SUCCESS, retry.Results, nil
+		}
+		return err.Unpack(scan.Results)
 	}
-
-	// Build the scan
-	s := scanner.scanBuilder.Build(t)
-	err = s.Init()
-	if err != nil {
-		return zgrab2.SCAN_UNKNOWN_ERROR, nil, err
-	}
-	defer s.Cleanup()
-
-	// Grab the results
-	grabError := s.Grab(req)
-	results := s.GetResults()
-	if grabError != nil {
-		return grabError.Unpack(results)
-	}
-
-	return zgrab2.SCAN_SUCCESS, results, nil
+	return zgrab2.SCAN_SUCCESS, scan.Results, nil
 }
 
 // RegisterModule is called by modules/http.go to register this module with the

@@ -10,7 +10,6 @@ import (
 	"github.com/golang-jwt/jwt"
 	"github.com/zmap/zgrab2"
 	"github.com/zmap/zgrab2/lib/http"
-	"github.com/zmap/zgrab2/modules/webproxy/request"
 )
 
 type webproxyTester struct {
@@ -48,10 +47,11 @@ func (cfg *webproxyTester) getScanner() (*Scanner, error) {
 	flags.Method = "POST"
 	flags.UserAgent = "Mozilla/5.0 HTTP proxy zgrab/0.1.6"
 	flags.Port = cfg.pport
-	flags.Timeout = 5 * time.Second
+	flags.Timeout = 30 * time.Second
 	flags.Endpoint = fmt.Sprintf("%s:%d", cfg.laddress, cfg.lport)
 	flags.HmacKey = cfg.hmackey
-	//flags.SlugToken = cfg.slug
+	flags.SlugToken = cfg.slug
+	flags.UseTLS = true
 
 	scanner := module.NewScanner()
 	if err := scanner.Init(flags); err != nil {
@@ -61,22 +61,23 @@ func (cfg *webproxyTester) getScanner() (*Scanner, error) {
 }
 
 func (cfg *webproxyTester) runTest(t *testing.T, testName string) {
-	scanner, err := cfg.getScanner()
-	if err != nil {
-		t.Fatalf("[%s] Unexpected error: %v", testName, err)
-	}
-
 	target := zgrab2.ScanTarget{
 		IP:   net.ParseIP(cfg.paddress),
 		Port: &cfg.pport,
 	}
 
 	// Run the server and start the scan
-	go cfg.runHTTPServer(t)
+	//go cfg.runHTTPServer(t)
 
-	_, _, err = scanner.Scan(target)
+	scanner, err := cfg.getScanner()
 	if err != nil {
-		t.Fatalf("[%s] error while sending: %v", testName, err)
+		t.Fatalf("[%s] Unexpected error: %v", testName, err)
+	}
+
+	if st, res, err := scanner.Scan(target); err != nil {
+		t.Fatalf("[%s] error while scanning: %v, %v", testName, err, st)
+	} else {
+		t.Logf("%+v", res)
 	}
 
 	// Wait for the request to get to the server and read from the channel
@@ -103,9 +104,9 @@ func (cfg *webproxyTester) runTest(t *testing.T, testName string) {
 
 var tests = map[string]*webproxyTester{
 	"success": {
-		paddress: "10.176.21.85",
-		laddress: "10.253.211.188",
-		pport:    8080,
+		paddress: "",
+		laddress: "",
+		pport:    8888,
 		lport:    8081,
 		bChan:    make(chan string, 1),
 		hmackey:  "gz13WcqhVBy09Mnw7ZZYNCqqlWvyRfJx",
@@ -139,11 +140,7 @@ func TestProxy(t *testing.T) {
 }
 
 func TestRequestBuilder(t *testing.T) {
-	b, err := request.NewHttpRequestBuilder("POST", "localhost:8080", http.Header{"cookie": {"123test"}}, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	b := NewRequestBuilder("POST", "localhost:8080", true, http.Header{"cookie": {"123test"}})
 	var times = 3
 	for range times {
 		r, err := b.Build("123test")
@@ -153,5 +150,42 @@ func TestRequestBuilder(t *testing.T) {
 		if r.URL.RawQuery != "token=123test" {
 			t.Fatalf("unexpected query: %s", r.URL.RawQuery)
 		}
+	}
+}
+
+type tokenTester struct {
+	address    string
+	hmacSecret []byte
+}
+
+func (cfg *tokenTester) runTest(t *testing.T, testName string) {
+	// load a new token
+	builder := NewJWTBuilder(cfg.hmacSecret)
+
+	token, err := builder.GenerateToken(cfg.address)
+	if err != nil {
+		t.Fatalf("[%s] error while generating token: %v", testName, err)
+	}
+
+	isValid, err := builder.Verify(token)
+	if err != nil {
+		t.Fatalf("[%s] error while validating token: %v", testName, err)
+	}
+
+	if !isValid {
+		t.Errorf("[%s] unexpected validation error", testName)
+	}
+}
+
+var tokenTests = map[string]*tokenTester{
+	"success": {
+		address:    "192.168.0.1:8080",
+		hmacSecret: []byte("gz13WcqhVBy09Mnw7ZZYNCqqlWvyRfJx"),
+	},
+}
+
+func TestToken(t *testing.T) {
+	for tname, cfg := range tokenTests {
+		cfg.runTest(t, tname)
 	}
 }

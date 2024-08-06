@@ -1,4 +1,4 @@
-package token
+package webproxy
 
 // Unique identifier that we use to track sent and received probes.
 // The token is signed and encrypted to reduce the chances
@@ -11,24 +11,19 @@ import (
 	"github.com/golang-jwt/jwt"
 )
 
-type TokenBuilder interface {
-	GenerateToken(address string) (string, error)
-	Verify(token string) (bool, error)
-}
-
-func NewJWTBuilder(hmacSecret []byte) TokenBuilder {
-	return &jwtBuilder{
+func NewJWTBuilder(hmacSecret []byte) *JWTTokenBuilder {
+	return &JWTTokenBuilder{
 		hmacSecret:    hmacSecret,
 		signingMethod: jwt.SigningMethodHS256,
 	}
 }
 
-type jwtBuilder struct {
+type JWTTokenBuilder struct {
 	hmacSecret    []byte
 	signingMethod *jwt.SigningMethodHMAC
 }
 
-func (builder *jwtBuilder) GenerateToken(address string) (string, error) {
+func (builder *JWTTokenBuilder) GenerateToken(address string) (string, error) {
 	ttime := time.Now()
 
 	claims := jwt.MapClaims{
@@ -47,7 +42,7 @@ func (builder *jwtBuilder) GenerateToken(address string) (string, error) {
 	return tokenString, nil
 }
 
-func (builder *jwtBuilder) Verify(token string) (bool, error) {
+func (builder *JWTTokenBuilder) Verify(token string) (bool, error) {
 
 	keyFunk := func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {

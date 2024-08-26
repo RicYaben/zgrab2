@@ -3,25 +3,27 @@ package webproxy
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/url"
-	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/zmap/zgrab2"
 	"github.com/zmap/zgrab2/lib/http"
 	"golang.org/x/net/html/charset"
+	"golang.org/x/net/proxy"
 )
 
 type Scan struct {
 	target  *zgrab2.ScanTarget
 	scanner *Scanner
 	client  *http.Client
-	useTLS  bool
+	scheme  string
 	maxRead int64
 	proxy   *url.URL
 
@@ -40,39 +42,33 @@ func readBody(contentType string, body io.ReadCloser, maxReadLen int64) (string,
 	encoder, encoding, certain := charset.DetermineEncoding(buf.Bytes(), contentType)
 	decoder := encoder.NewDecoder()
 
-	// Return early if the body was empty. No reason to go on from here.
-	// A bit weird, but it may happen!
-	bts := buf.Bytes()
-	if len(bts) == 0 {
-		return "", nil, nil
-	}
+	bodyText := ""
+	decodedSuccessfully := false
 
-	var b strings.Builder
-	switch {
-	//"windows-1252" is the default value and will likely not decode correctly
-	case certain || encoding != "windows-1252":
-		decoded, err := decoder.Bytes(bts)
-		if err != nil {
-			return "", nil, fmt.Errorf("error while decoding the body: %v", err)
+	if certain || encoding != "windows-1252" {
+		decoded, decErr := decoder.Bytes(buf.Bytes())
+
+		if decErr == nil {
+			bodyText = string(decoded)
+			decodedSuccessfully = true
 		}
-
-		b.Write(decoded)
-	default:
-		b.Write(bts)
 	}
 
-	bString := b.String()
+	if !decodedSuccessfully {
+		bodyText = buf.String()
+	}
+
 	// re-enforce readlen
-	if int64(len(bString)) > maxReadLen {
-		bString = bString[:int(maxReadLen)]
+	if int64(len(bodyText)) > maxReadLen {
+		bodyText = bodyText[:int(maxReadLen)]
 	}
 
 	// Calculate the hash of the body
 	m := sha256.New()
-	m.Write(bts)
+	m.Write(buf.Bytes())
 	h := m.Sum(nil)
 
-	return bString, h, nil
+	return bodyText, h, nil
 }
 
 // Get a context whose deadline is the earliest of the context's deadline (if it has one) and the
@@ -134,6 +130,33 @@ func (scan *Scan) dialContext(ctx context.Context, network string, addr string) 
 	return conn, nil
 }
 
+func (scan *Scan) socks5DialContext() (func(ctx context.Context, network, addr string) (net.Conn, error), error) {
+	u, err := scan.getProxyURL()
+	if err != nil {
+		return nil, err
+	}
+
+	socksDialer, err := proxy.FromURL(u, proxy.Direct)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SOCKS5 dialer: %v", err)
+	}
+
+	dc := socksDialer.(interface {
+		DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+	})
+
+	return func(ctx context.Context, network string, address string) (net.Conn, error) {
+		timeoutContext, _ := context.WithTimeout(ctx, scan.client.Timeout)
+		conn, err := dc.DialContext(scan.withDeadlineContext(timeoutContext), network, address)
+		if err != nil {
+			return nil, err
+		}
+
+		scan.connections = append(scan.connections, conn)
+		return conn, nil
+	}, nil
+}
+
 // getTLSDialer returns a Dial function that connects using the
 // zgrab2.GetTLSConnection()
 func (scan *Scan) getTLSDialer(t *zgrab2.ScanTarget) func(network, addr string) (net.Conn, error) {
@@ -173,10 +196,7 @@ func (scan *Scan) getTLSDialer(t *zgrab2.ScanTarget) func(network, addr string) 
 	}
 }
 
-func (scan *Scan) SetProxyUrl() error {
-	transport := scan.client.Transport.(*http.Transport)
-	transport.DialContext = scan.dialContext
-
+func (scan *Scan) getProxyURL() (*url.URL, error) {
 	host := scan.target.Domain
 	if host == "" {
 		host = scan.target.IP.String()
@@ -187,22 +207,36 @@ func (scan *Scan) SetProxyUrl() error {
 		port = &scan.scanner.config.BaseFlags.Port
 	}
 
-	var schema string
-	switch {
-	case scan.useTLS:
-		schema = "https"
-		transport.DialTLS = scan.getTLSDialer(scan.target)
-	default:
-		schema = "http"
-	}
+	addr := fmt.Sprintf("%s://%s:%d", scan.scheme, host, *port)
+	return url.Parse(addr)
+}
 
-	addr := fmt.Sprintf("%s://%s:%d", schema, host, *port)
-	proxy, err := url.Parse(addr)
+// Note: `scan.target` is the proxy.
+func (scan *Scan) SetProxyUrl() error {
+	proxy, err := scan.getProxyURL()
 	if err != nil {
-		return fmt.Errorf(`failed to parse proxy address "%s": %v`, addr, err)
+		return err
 	}
 	scan.proxy = proxy
-	transport.Proxy = http.ProxyURL(proxy)
+
+	transport := scan.client.Transport.(*http.Transport)
+	switch scan.scheme {
+	case "https":
+		transport.DialTLS = scan.getTLSDialer(scan.target)
+		transport.Proxy = http.ProxyURL(proxy)
+	case "socks5":
+		// This dialer does not need the Proxy
+		// value in the transport, since it makes
+		// connections through the proxy already.
+		dialCtx, err := scan.socks5DialContext()
+		if err != nil {
+			return err
+		}
+		transport.DialContext = dialCtx
+	default:
+		transport.DialContext = scan.dialContext
+		transport.Proxy = http.ProxyURL(proxy)
+	}
 
 	return nil
 }
@@ -219,7 +253,10 @@ func (scan *Scan) Grab() *zgrab2.ScanError {
 	}
 
 	// Build the request
-	req, err := scan.scanner.requestBuilder.Build(tkn)
+	hash := md5.New()
+	hash.Write([]byte(tkn))
+	tknHash := fmt.Sprintf("%x", hash.Sum(nil))
+	req, err := scan.scanner.requestBuilder.Build(tknHash)
 	if err != nil {
 		return zgrab2.NewScanError(zgrab2.SCAN_UNKNOWN_ERROR, err)
 	}
@@ -232,6 +269,7 @@ func (scan *Scan) Grab() *zgrab2.ScanError {
 
 	// Put the response as is
 	scan.Results.Token = tkn
+	scan.Results.TokenMD5 = tknHash
 	scan.Results.Response = resp
 	scan.Results.Target = scan.proxy.String()
 	if err != nil {
@@ -243,8 +281,8 @@ func (scan *Scan) Grab() *zgrab2.ScanError {
 
 	// NOTE: we will not handle responses with unknown content length
 	// or supposedly "empty". This can be done offline
-	if resp.ContentLength <= 0 {
-		return nil
+	if resp.ContentLength == 0 {
+		return zgrab2.NewScanError(zgrab2.SCAN_UNKNOWN_ERROR, errors.New("empty content"))
 	}
 
 	// Parse the body until the assigned number of bytes to read
@@ -255,14 +293,12 @@ func (scan *Scan) Grab() *zgrab2.ScanError {
 
 	cType := resp.Header.Get("content-type")
 	bodyText, h, err := readBody(cType, resp.Body, maxReadLen)
-	if err != nil {
-		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
-	}
-
 	// Assign the parsed body
 	resp.BodyText = bodyText
 	resp.BodySHA256 = h
-
+	if err != nil {
+		return zgrab2.NewScanError(zgrab2.SCAN_UNKNOWN_ERROR, err)
+	}
 	return nil
 }
 
@@ -288,13 +324,6 @@ type ScanBuilder struct {
 	scanner *Scanner
 	client  http.Client
 	maxRead int64
-}
-
-func (b *ScanBuilder) getTLSDialer(t *zgrab2.ScanTarget) func(network, addr string) (net.Conn, error) {
-	return func(network, addr string) (net.Conn, error) {
-		log.Fatal("not implemented yet")
-		return nil, nil
-	}
 }
 
 func (b *ScanBuilder) SetClient() *ScanBuilder {
@@ -323,7 +352,7 @@ func (b *ScanBuilder) SetMaxRead() *ScanBuilder {
 	switch mr {
 	// this is a replacement for nil values, i.e., default
 	case 0:
-		b.maxRead = 256
+		b.maxRead = 4096
 	// it may be that we do not want to read anything.
 	case -1:
 		b.maxRead = 0
@@ -333,17 +362,14 @@ func (b *ScanBuilder) SetMaxRead() *ScanBuilder {
 	return b
 }
 
-func (b *ScanBuilder) Build(t *zgrab2.ScanTarget, useTLS bool) *Scan {
+func (b *ScanBuilder) Build(t *zgrab2.ScanTarget, scheme string) *Scan {
 	scan := &Scan{
 		scanner:  b.scanner,
 		target:   t,
-		useTLS:   useTLS,
+		scheme:   scheme,
 		deadline: time.Now().Add(b.client.Timeout),
 		client:   &b.client,
 		maxRead:  b.maxRead,
 	}
-
-	// TODO: handle SOCKS
-	// if useSOCKS {}
 	return scan
 }

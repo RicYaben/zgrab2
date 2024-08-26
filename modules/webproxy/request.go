@@ -1,12 +1,12 @@
 package webproxy
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"net"
 	"net/url"
 	"slices"
-	"strings"
 
 	"github.com/zmap/zgrab2/lib/http"
 )
@@ -77,9 +77,8 @@ func (b *RequestBuilder) SetMethod(method string) *RequestBuilder {
 
 func (builder *RequestBuilder) SetHeaders(headers http.Header) {
 	builder.headers = http.Header{
-		"Accept":           {"*/*"},
-		"Proxy-Connection": {"close"},
-		"Cache-Control":    {"no-store"},
+		"Accept":       {"*/*"},
+		"Content-Type": {"application/x-www-form-urlencoded"},
 	}
 
 	if headers == nil {
@@ -91,17 +90,17 @@ func (builder *RequestBuilder) SetHeaders(headers http.Header) {
 	}
 }
 
-func (builder *RequestBuilder) Build(token string) (*http.Request, error) {
-	// Create the request
-	req, err := http.NewRequest(builder.method, builder.url.String(), strings.NewReader(token))
+func (builder *RequestBuilder) Build(tokenHash string) (*http.Request, error) {
+	t := fmt.Sprintf("token=%s", tokenHash)
+	req, err := http.NewRequest(builder.method, builder.url.String(), bytes.NewBufferString(t))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("RequestBuilder.Build(): failed to create request: %v", err)
 	}
 
 	// Slug token if needed
 	if builder.slug {
 		q := req.URL.Query()
-		q.Add("token", token)
+		q.Add("token", tokenHash)
 		req.URL.RawQuery = q.Encode()
 	}
 

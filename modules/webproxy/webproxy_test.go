@@ -1,6 +1,7 @@
 package webproxy
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"github.com/golang-jwt/jwt"
 	"github.com/zmap/zgrab2"
 	"github.com/zmap/zgrab2/lib/http"
+	"golang.org/x/net/proxy"
 )
 
 type webproxyTester struct {
@@ -45,13 +47,14 @@ func (cfg *webproxyTester) getScanner() (*Scanner, error) {
 	var module Module
 	flags := module.NewFlags().(*Flags)
 	flags.Method = "POST"
-	flags.UserAgent = "Mozilla/5.0 HTTP proxy zgrab/0.1.6"
+	flags.UserAgent = "Mozilla/5.0 HTTPproxy/1.0 zgrab/0.1.6"
 	flags.Port = cfg.pport
 	flags.Timeout = 30 * time.Second
 	flags.Endpoint = fmt.Sprintf("%s:%d", cfg.laddress, cfg.lport)
 	flags.HmacKey = cfg.hmackey
 	flags.SlugToken = cfg.slug
-	flags.UseTLS = true
+	flags.UseSOCKS = true
+	flags.MaxSize = 4096
 
 	scanner := module.NewScanner()
 	if err := scanner.Init(flags); err != nil {
@@ -104,10 +107,10 @@ func (cfg *webproxyTester) runTest(t *testing.T, testName string) {
 
 var tests = map[string]*webproxyTester{
 	"success": {
-		paddress: "",
-		laddress: "",
-		pport:    8888,
-		lport:    8081,
+		paddress: "82.165.198.169",
+		laddress: "130.226.254.28",
+		pport:    41569,
+		lport:    80,
 		bChan:    make(chan string, 1),
 		hmackey:  "gz13WcqhVBy09Mnw7ZZYNCqqlWvyRfJx",
 	},
@@ -137,6 +140,45 @@ func TestProxy(t *testing.T) {
 	for tname, cfg := range tests {
 		cfg.runTest(t, tname)
 	}
+}
+
+func TestClient(t *testing.T) {
+	proxyURL := "98.181.137.80:4145"
+	dialer, err := proxy.SOCKS5("tcp", proxyURL, nil, proxy.Direct)
+	if err != nil {
+		fmt.Printf("Failed to create dialer: %v\n", err)
+		return
+	}
+
+	dc := dialer.(interface {
+		DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+	})
+
+	dfunc := func(ctx context.Context, network string, address string) (net.Conn, error) {
+		t := 10 * time.Second
+		tc, _ := context.WithTimeout(ctx, t)
+		cded, _ := context.WithDeadline(tc, time.Now().Add(t))
+		conn, err := dc.DialContext(cded, network, address)
+		return conn, err
+	}
+
+	transport := &http.Transport{
+		DialContext: dfunc,
+	}
+
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+		UserAgent: "Go-http-client/1.1",
+	}
+
+	req, _ := http.NewRequest("POST", "http://130.226.254.28:80", nil)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Error(err)
+	}
+	defer resp.Body.Close()
 }
 
 func TestRequestBuilder(t *testing.T) {

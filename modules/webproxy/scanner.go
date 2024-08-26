@@ -48,8 +48,8 @@ type Flags struct {
 	RetryTLS bool `long:"retry-tls" description:"If the initial request fails, reconnect and try with HTTPS."`
 
 	// TODO: not implemented yet!
-	//UseSOCKS   bool `long:"use-tls" description:"Perform a SOCKS connection on the initial host"`
-	//RetrySOCKS bool `long:"retry-socks" description:"If the initial request fails, reconnect and try with SOCKS."`
+	UseSOCKS   bool `long:"use-socks" description:"Perform a SOCKS connection on the initial host"`
+	RetrySOCKS bool `long:"retry-socks" description:"If the initial request fails, reconnect and try with SOCKS."`
 
 	RawHeaders bool `long:"raw-headers" description:"Extract raw response up through headers"`
 }
@@ -62,8 +62,9 @@ type Results struct {
 	// It contains all redirect response prior to the final response.
 	RedirectResponseChain []*http.Response `json:"redirect_response_chain,omitempty"`
 
-	Token  string `json:"token"`
-	Target string `json:"target"`
+	Token    string `json:"token"`
+	TokenMD5 string `json:"token-md5"`
+	Target   string `json:"target"`
 }
 
 // Module is an implementation of the zgrab2.Module interface.
@@ -160,28 +161,49 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	return nil
 }
 
-func (scanner *Scanner) Scan(t zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
-	scan := scanner.scanBuilder.Build(&t, scanner.config.UseTLS)
+func (s *Scanner) scan(t *zgrab2.ScanTarget, scheme string) (zgrab2.ScanStatus, interface{}, error) {
+	scan := s.scanBuilder.Build(t, scheme)
 	defer scan.Cleanup()
 
 	if err := scan.Grab(); err != nil {
-		if scanner.config.RetryTLS && !scanner.config.UseTLS {
-			scan.Cleanup()
-			retry := scanner.scanBuilder.Build(&t, true)
-			defer retry.Cleanup()
-
-			if rErr := retry.Grab(); rErr != nil {
-				return rErr.Unpack(scan.Results)
-			}
-			return zgrab2.SCAN_SUCCESS, retry.Results, nil
-		}
 		return err.Unpack(scan.Results)
 	}
 	return zgrab2.SCAN_SUCCESS, scan.Results, nil
 }
 
-// RegisterModule is called by modules/http.go to register this module with the
-// zgrab2 framework.
+func (s *Scanner) getRetryIterator() []string {
+	var schemes []string
+	var base string
+	switch {
+	case s.config.UseTLS:
+		base = "https"
+	case s.config.UseSOCKS:
+		base = "socks5"
+	default:
+		base = "http"
+	}
+	schemes = append(schemes, base)
+	if s.config.RetryTLS && !s.config.UseTLS {
+		schemes = append(schemes, "https")
+	}
+
+	if s.config.RetrySOCKS && !s.config.UseSOCKS {
+		schemes = append(schemes, "socks5")
+	}
+
+	return schemes
+}
+
+func (s *Scanner) Scan(t zgrab2.ScanTarget) (status zgrab2.ScanStatus, results interface{}, err error) {
+	schemes := s.getRetryIterator()
+	for _, scheme := range schemes {
+		if status, results, err = s.scan(&t, scheme); status == zgrab2.SCAN_SUCCESS {
+			return
+		}
+	}
+	return
+}
+
 func RegisterModule() {
 	var module Module
 

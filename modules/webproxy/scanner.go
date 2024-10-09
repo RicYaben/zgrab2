@@ -62,11 +62,9 @@ type Results struct {
 	// It contains all redirect response prior to the final response.
 	RedirectResponseChain []*http.Response `json:"redirect_response_chain,omitempty"`
 
-	Token      string `json:"token"`
-	TokenMD5   string `json:"token-md5"`
-	Target     string `json:"target"`
-	Body       string `json:"body"`
-	BodySHA256 []byte `json:"body-sha256"`
+	Token    string `json:"token"`
+	TokenMD5 string `json:"token-md5"`
+	Target   string `json:"target"`
 }
 
 // Module is an implementation of the zgrab2.Module interface.

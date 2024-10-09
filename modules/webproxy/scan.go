@@ -284,8 +284,8 @@ func (scan *Scan) Grab() *zgrab2.ScanError {
 		return zgrab2.NewScanError(zgrab2.SCAN_UNKNOWN_ERROR, err)
 	}
 	// Assign the parsed body
-	scan.results.Body = bodyText
-	scan.results.BodySHA256 = h
+	scan.results.Response.BodyText = bodyText
+	scan.results.Response.BodySHA256 = h
 	return nil
 }
 

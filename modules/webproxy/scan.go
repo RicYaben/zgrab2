@@ -1,11 +1,9 @@
 package webproxy
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -30,42 +28,37 @@ type Scan struct {
 	deadline    time.Time
 	connections []net.Conn
 
-	Results Results
+	results Results
 }
 
 // Attempt to decode the body of a response
 func readBody(contentType string, body io.ReadCloser, maxReadLen int64) (string, []byte, error) {
+	bodyBytes, err := io.ReadAll(io.LimitReader(body, maxReadLen))
+	if err != nil && err != io.EOF {
+		return "", nil, err
+	}
 
 	// Copy the content we want to read and build the decoder
-	buf := new(bytes.Buffer)
-	io.CopyN(buf, body, maxReadLen)
-	encoder, encoding, certain := charset.DetermineEncoding(buf.Bytes(), contentType)
-	decoder := encoder.NewDecoder()
+	encoder, encoding, certain := charset.DetermineEncoding(bodyBytes, contentType)
 
 	bodyText := ""
 	decodedSuccessfully := false
+	decoder := encoder.NewDecoder()
 
 	if certain || encoding != "windows-1252" {
-		decoded, decErr := decoder.Bytes(buf.Bytes())
-
-		if decErr == nil {
+		if decoded, decErr := decoder.Bytes(bodyBytes); decErr == nil {
 			bodyText = string(decoded)
 			decodedSuccessfully = true
 		}
 	}
 
 	if !decodedSuccessfully {
-		bodyText = buf.String()
-	}
-
-	// re-enforce readlen
-	if int64(len(bodyText)) > maxReadLen {
-		bodyText = bodyText[:int(maxReadLen)]
+		bodyText = string(bodyBytes)
 	}
 
 	// Calculate the hash of the body
 	m := sha256.New()
-	m.Write(buf.Bytes())
+	m.Write(bodyBytes)
 	h := m.Sum(nil)
 
 	return bodyText, h, nil
@@ -268,10 +261,10 @@ func (scan *Scan) Grab() *zgrab2.ScanError {
 	}
 
 	// Put the response as is
-	scan.Results.Token = tkn
-	scan.Results.TokenMD5 = tknHash
-	scan.Results.Response = resp
-	scan.Results.Target = scan.proxy.String()
+	scan.results.Token = tkn
+	scan.results.TokenMD5 = tknHash
+	scan.results.Response = resp
+	scan.results.Target = scan.proxy.String()
 	if err != nil {
 		if urlError, ok := err.(*url.Error); ok {
 			err = urlError.Err
@@ -279,26 +272,20 @@ func (scan *Scan) Grab() *zgrab2.ScanError {
 		return zgrab2.DetectScanError(err)
 	}
 
-	// NOTE: we will not handle responses with unknown content length
-	// or supposedly "empty". This can be done offline
-	if resp.ContentLength == 0 {
-		return zgrab2.NewScanError(zgrab2.SCAN_UNKNOWN_ERROR, errors.New("empty content"))
-	}
-
 	// Parse the body until the assigned number of bytes to read
-	maxReadLen := scan.maxRead
-	if resp.ContentLength < maxReadLen {
+	var maxReadLen int64 = scan.maxRead
+	if resp.ContentLength >= 0 && resp.ContentLength < maxReadLen {
 		maxReadLen = resp.ContentLength
 	}
 
 	cType := resp.Header.Get("content-type")
 	bodyText, h, err := readBody(cType, resp.Body, maxReadLen)
-	// Assign the parsed body
-	resp.BodyText = bodyText
-	resp.BodySHA256 = h
 	if err != nil {
 		return zgrab2.NewScanError(zgrab2.SCAN_UNKNOWN_ERROR, err)
 	}
+	// Assign the parsed body
+	scan.results.Body = bodyText
+	scan.results.BodySHA256 = h
 	return nil
 }
 
@@ -317,6 +304,7 @@ func NewScanBuilder(scanner *Scanner) *ScanBuilder {
 	}
 
 	builder.SetClient()
+	builder.SetMaxRead()
 	return builder
 }
 

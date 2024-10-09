@@ -62,9 +62,11 @@ type Results struct {
 	// It contains all redirect response prior to the final response.
 	RedirectResponseChain []*http.Response `json:"redirect_response_chain,omitempty"`
 
-	Token    string `json:"token"`
-	TokenMD5 string `json:"token-md5"`
-	Target   string `json:"target"`
+	Token      string `json:"token"`
+	TokenMD5   string `json:"token-md5"`
+	Target     string `json:"target"`
+	Body       string `json:"body"`
+	BodySHA256 []byte `json:"body-sha256"`
 }
 
 // Module is an implementation of the zgrab2.Module interface.
@@ -166,9 +168,9 @@ func (s *Scanner) scan(t *zgrab2.ScanTarget, scheme string) (zgrab2.ScanStatus, 
 	defer scan.Cleanup()
 
 	if err := scan.Grab(); err != nil {
-		return err.Unpack(scan.Results)
+		return err.Unpack(scan.results)
 	}
-	return zgrab2.SCAN_SUCCESS, scan.Results, nil
+	return zgrab2.SCAN_SUCCESS, scan.results, nil
 }
 
 func (s *Scanner) getRetryIterator() []string {

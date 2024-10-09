@@ -47,13 +47,14 @@ func (cfg *webproxyTester) getScanner() (*Scanner, error) {
 	var module Module
 	flags := module.NewFlags().(*Flags)
 	flags.Method = "POST"
-	flags.UserAgent = "Mozilla/5.0 HTTPproxy/1.0 zgrab/0.1.6"
+	flags.UserAgent = "Mozilla/5.0 (compatible; CCC-scanner/1.0; +http://cccc-scanner.cl.cam.ac.uk/info.html)"
 	flags.Port = cfg.pport
 	flags.Timeout = 30 * time.Second
 	flags.Endpoint = fmt.Sprintf("%s:%d", cfg.laddress, cfg.lport)
 	flags.HmacKey = cfg.hmackey
 	flags.SlugToken = cfg.slug
-	flags.UseSOCKS = true
+	//flags.RetryTLS = true
+	//flags.RetrySOCKS = true
 	flags.MaxSize = 4096
 
 	scanner := module.NewScanner()
@@ -107,9 +108,9 @@ func (cfg *webproxyTester) runTest(t *testing.T, testName string) {
 
 var tests = map[string]*webproxyTester{
 	"success": {
-		paddress: "82.165.198.169",
-		laddress: "130.226.254.28",
-		pport:    41569,
+		paddress: "1.1.1.1",
+		laddress: "128.232.21.75",
+		pport:    80,
 		lport:    80,
 		bChan:    make(chan string, 1),
 		hmackey:  "gz13WcqhVBy09Mnw7ZZYNCqqlWvyRfJx",
@@ -143,7 +144,7 @@ func TestProxy(t *testing.T) {
 }
 
 func TestClient(t *testing.T) {
-	proxyURL := "98.181.137.80:4145"
+	proxyURL := "1.1.1.1:80"
 	dialer, err := proxy.SOCKS5("tcp", proxyURL, nil, proxy.Direct)
 	if err != nil {
 		fmt.Printf("Failed to create dialer: %v\n", err)
@@ -172,7 +173,7 @@ func TestClient(t *testing.T) {
 		UserAgent: "Go-http-client/1.1",
 	}
 
-	req, _ := http.NewRequest("POST", "http://130.226.254.28:80", nil)
+	req, _ := http.NewRequest("POST", "http://1.1.1.1:80", nil)
 
 	resp, err := client.Do(req)
 	if err != nil {

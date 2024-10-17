@@ -29,10 +29,14 @@ type Flags struct {
 	Endpoint    string `json:"endpoint" description:"Path endpoint in the server"`
 	BrowseDepth uint   `json:"browse-depth" description:"Browse nesting level, one level is enough to prove access and retrival. Default: 0; Max: 10; Recommended: 1;"`
 
-	UseHTTP   bool `json:"use-http" description:"use HTTP"`
-	RetryHTTP bool `json:"retry-http"  description:"retry over HTTP"`
-	UseTLS    bool `json:"use-tls" description:"Use HTTPS"`
-	RetryTLS  bool `json:"retry-tls" description:"retry to connect with TLS"`
+	/*
+		# TODO FIXME [17/10/2024]: This may make sense in the future. Implement it
+		# Right now is not a priority, but others may want to specify the scheme directly
+		UseHTTP   bool `json:"use-http" description:"use HTTP"`
+		RetryHTTP bool `json:"retry-http"  description:"retry over HTTP"`
+		UseTLS    bool `json:"use-tls" description:"Use HTTPS"`
+		RetryTLS  bool `json:"retry-tls" description:"retry to connect with TLS"`
+	*/
 }
 
 // Module implements the zgrab2.Module interface.

@@ -47,7 +47,6 @@ type Flags struct {
 	UseTLS   bool `long:"use-tls" description:"Perform an HTTPS connection on the initial host"`
 	RetryTLS bool `long:"retry-tls" description:"If the initial request fails, reconnect and try with HTTPS."`
 
-	// TODO: not implemented yet!
 	UseSOCKS   bool `long:"use-socks" description:"Perform a SOCKS connection on the initial host"`
 	RetrySOCKS bool `long:"retry-socks" description:"If the initial request fails, reconnect and try with SOCKS."`
 

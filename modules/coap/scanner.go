@@ -143,8 +143,7 @@ func (scanner *Scanner) newCoAPscan(t *zgrab2.ScanTarget) *scan {
 
 func (scanner *Scanner) Scan(t zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
 	scan := scanner.newCoAPscan(&t)
-	err := scan.Grab()
-	if err != nil {
+	if err := scan.Grab(); err != nil {
 		return err.Unpack(&scan.results)
 	}
 	return zgrab2.SCAN_SUCCESS, &scan.results, nil

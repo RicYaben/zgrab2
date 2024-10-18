@@ -92,7 +92,7 @@ func (*Scanner) Protocol() string {
 
 func RegisterModule() {
 	var module Module
-	_, err := zgrab2.AddCommand("opcuac", "OPC UA module", module.Description(), 4840, &module)
+	_, err := zgrab2.AddCommand("opcua", "OPC UA module", module.Description(), 4840, &module)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func (s *Scanner) newOPCUAscan(ep string) *scan {
 }
 
 func (s *Scanner) Scan(t zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
-	ep := fmt.Sprintf("opc.tcp://%s:%d", t.String(), *t.Port)
+	ep := fmt.Sprintf("opc.tcp://%s:%d", t.Host(), *t.Port)
 	ep = strings.Join([]string{ep, s.endpoint}, "/")
 
 	scan := s.newOPCUAscan(ep)

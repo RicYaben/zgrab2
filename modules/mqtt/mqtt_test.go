@@ -2,7 +2,6 @@
 package mqtt
 
 import (
-	"net"
 	"testing"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 )
 
 type mqttTester struct {
+	addr           string
 	port           int
 	expectedStatus zgrab2.ScanStatus
 }
@@ -49,7 +49,7 @@ func (t *mqttTester) runTest(test *testing.T, name string) {
 	}
 
 	target := zgrab2.ScanTarget{
-		IP: net.ParseIP("127.0.0.1"),
+		Domain: t.addr,
 	}
 
 	status, ret, err := scanner.Scan(target)
@@ -68,6 +68,7 @@ func (t *mqttTester) runTest(test *testing.T, name string) {
 
 var tests = map[string]*mqttTester{
 	"success": {
+		addr:           "test.mosquitto.org",
 		port:           1883,
 		expectedStatus: zgrab2.SCAN_SUCCESS,
 	},

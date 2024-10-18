@@ -117,7 +117,7 @@ func (scan *scan) makeClient() (paho.Client, error) {
 	if scan.target.Port != nil {
 		port = scan.target.Port
 	}
-	t := fmt.Sprintf("%s://%s:%d", scheme, scan.target.IP.String(), *port)
+	t := fmt.Sprintf("%s://%s:%d", scheme, scan.target.Host(), *port)
 	o.AddBroker(t)
 
 	// Add auth details

@@ -140,6 +140,8 @@ func (s *scan) setEndpoints(eps []*ua.EndpointDescription) {
 }
 
 func (s *scan) Grab() *zgrab2.ScanError {
+	defer s.cancel()
+
 	// Get endpoints
 	eps, err := opcua.GetEndpoints(s.ctx, s.endpoint)
 	if err != nil {

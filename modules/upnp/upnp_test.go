@@ -10,6 +10,7 @@ import (
 )
 
 type upnpTester struct {
+	addr           string
 	port           int
 	expectedStatus zgrab2.ScanStatus
 }
@@ -48,7 +49,7 @@ func (cfg *upnpTester) getScanner() (*Scanner, error) {
 	flags.Method = "M-SEARCH"
 	flags.Man = "ssdp:discover"
 	flags.St = "upnp:rootdevice"
-	flags.UserAgent = "Mozilla/5.0 UPnP zgrab/0.1.6"
+	flags.UserAgent = "Mozilla/5.0"
 	flags.Port = uint(cfg.port)
 	flags.Timeout = 10 * time.Second
 
@@ -68,7 +69,7 @@ func (cfg *upnpTester) runTest(t *testing.T, testName string) {
 	//cfg.runFakeUPnPServer(t)
 
 	target := zgrab2.ScanTarget{
-		IP: net.ParseIP("85.222.188.130"),
+		IP: net.ParseIP(cfg.addr),
 	}
 	status, ret, err := scanner.Scan(target)
 	if status != cfg.expectedStatus {
@@ -86,6 +87,7 @@ func (cfg *upnpTester) runTest(t *testing.T, testName string) {
 
 var tests = map[string]*upnpTester{
 	"success": {
+		addr:           "127.0.0.1",
 		port:           1900, // Very often the UPnP port 1900 is already binded
 		expectedStatus: zgrab2.SCAN_SUCCESS,
 	},

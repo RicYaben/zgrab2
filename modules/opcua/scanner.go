@@ -24,10 +24,11 @@ import (
 type Flags struct {
 	zgrab2.BaseFlags
 
-	Uri         string `json:"uri" default:"urn:opcua:zgrab" description:"Client URI for anonymous authentication"`
-	CertHost    string `json:"cert-host" default:"localhost" description:"Host certificate holder"`
-	Endpoint    string `json:"endpoint" description:"Path endpoint in the server"`
-	BrowseDepth uint   `json:"browse-depth" description:"Browse nesting level, one level is enough to prove access and retrival. Default: 0; Max: 10; Recommended: 1;"`
+	Uri           string `json:"uri" default:"urn:opcua:zgrab" description:"Client URI for anonymous authentication"`
+	CertHost      string `json:"cert-host" default:"localhost" description:"Host certificate holder"`
+	Endpoint      string `json:"endpoint" description:"Path endpoint in the server"`
+	EndpointLimit uint   `json:"endpoint-limit" description:"Limit the number of nodes to interact with while browsing"`
+	BrowseDepth   uint   `json:"browse-depth" description:"Browse nesting level, one level is enough to prove access and retrival. Default: 0; Max: 10; Recommended: 1;"`
 
 	/*
 		# TODO FIXME [17/10/2024]: This may make sense in the future. Implement it
@@ -123,6 +124,7 @@ func (flags *Flags) Help() string {
 type scan struct {
 	scanner *Scanner
 	ctx     context.Context
+	cancel  context.CancelFunc
 
 	results   Results
 	endpoint  string
@@ -145,8 +147,13 @@ func (s *scan) Grab() *zgrab2.ScanError {
 	}
 	s.setEndpoints(eps)
 
+	resEps := s.results.Endpoints
+	if limit := int(s.scanner.config.EndpointLimit); len(resEps) > limit {
+		resEps = resEps[:limit]
+	}
+
 	// Authenticate to each endpoints
-	for _, r := range s.results.Endpoints {
+	for _, r := range resEps {
 		s.authAndBrowse(r)
 	}
 	return nil
@@ -196,24 +203,30 @@ func (s *scan) authAndBrowse(r *EndpointResult) {
 	}
 
 	if authedClient != nil {
-		r.Namespaces = authedClient.Namespaces()
-		id, _ := ua.ParseNodeID("i=84")
-		nodes, err := s.browser.browse(authedClient.Node(id), "", 0)
-		if err != nil {
+		select {
+		case <-s.ctx.Done():
 			return
+		default:
+			r.Namespaces = authedClient.Namespaces()
+			id, _ := ua.ParseNodeID("i=84")
+			nodes, err := s.browser.browse(authedClient.Node(id), "", 0)
+			if err != nil {
+				return
+			}
+			r.Nodes = nodes
 		}
-		r.Nodes = nodes
 	}
 }
 
 func (s *Scanner) newOPCUAscan(ep string) *scan {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), s.config.Timeout)
 	return &scan{
 		scanner:   s,
 		ctx:       ctx,
 		endpoint:  ep,
 		authModes: []string{"anonymous", "certificate"},
 		browser:   newBrowser(s.config.BrowseDepth, ctx),
+		cancel:    cancel,
 	}
 }
 

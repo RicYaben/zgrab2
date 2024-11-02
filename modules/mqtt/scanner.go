@@ -197,7 +197,7 @@ func (scan *scan) Grab() *zgrab2.ScanError {
 	}
 
 	go func() {
-		time.Sleep(scan.scanner.config.SubscribeTimeout)
+		<-time.After(scan.scanner.config.SubscribeTimeout)
 		scan.client.Unsubscribe(subs...)
 		close(msgs)
 	}()
@@ -205,9 +205,9 @@ func (scan *scan) Grab() *zgrab2.ScanError {
 	topics := make(map[string][]string)
 	for m := range msgs {
 		// handle here to addd the results to the scan
-		msgs := topics[m.Topic()]
-		msgs = append(msgs, string(m.Payload()))
-		topics[m.Topic()] = msgs
+		msg := topics[m.Topic()]
+		msg = append(msg, string(m.Payload()))
+		topics[m.Topic()] = msg
 	}
 	scan.results.Topics = topics
 	return nil
@@ -226,6 +226,9 @@ func (scanner *Scanner) Protocol() string {
 // Init initializes the Scanner.
 func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	scanner.config = flags.(*Flags)
+	if scanner.config.SubscribeTimeout <= 0 {
+		scanner.config.SubscribeTimeout = 10 * time.Second
+	}
 	return nil
 }
 

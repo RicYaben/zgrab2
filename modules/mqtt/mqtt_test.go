@@ -27,6 +27,8 @@ func (t *mqttTester) getScanner() (*Scanner, error) {
 	flags.SubscribeTopics = "#,$SYS/#"
 	flags.SubscribeTimeout = 10 * time.Second
 	flags.TopicsSeparator = ","
+	flags.LimitMessages = 1
+	flags.LimitTopics = 10
 
 	// Attempt anonymous auth with
 	// an empty user and password as the

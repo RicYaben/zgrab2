@@ -3,7 +3,6 @@ package mqtt
 
 import (
 	"testing"
-	"time"
 
 	"github.com/zmap/zgrab2"
 )
@@ -25,7 +24,6 @@ func (t *mqttTester) getScanner() (*Scanner, error) {
 
 	// Client and user
 	flags.SubscribeTopics = "#,$SYS/#"
-	flags.SubscribeTimeout = 10 * time.Second
 	flags.TopicsSeparator = ","
 	flags.LimitMessages = 1
 	flags.LimitTopics = 10

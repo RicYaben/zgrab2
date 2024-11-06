@@ -190,17 +190,12 @@ func (scan *Scan) getTLSDialer(t *zgrab2.ScanTarget) func(network, addr string) 
 }
 
 func (scan *Scan) getProxyURL() (*url.URL, error) {
-	host := scan.target.Domain
-	if host == "" {
-		host = scan.target.IP.String()
-	}
-
 	port := scan.target.Port
 	if port == nil {
 		port = &scan.scanner.config.BaseFlags.Port
 	}
 
-	addr := fmt.Sprintf("%s://%s:%d", scan.scheme, host, *port)
+	addr := fmt.Sprintf("%s://%s:%d", scan.scheme, scan.target.Host(), *port)
 	return url.Parse(addr)
 }
 

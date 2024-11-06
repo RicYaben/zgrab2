@@ -4,15 +4,8 @@
 package mqtt
 
 import (
-	"context"
-	"crypto/tls"
-	"encoding/json"
-	"fmt"
 	"log"
-	"strings"
-	"sync"
 
-	paho "github.com/eclipse/paho.mqtt.golang"
 	"github.com/zmap/zgrab2"
 )
 
@@ -64,191 +57,17 @@ func (module *Module) Description() string {
 	return "Send an MQTT request and read the response."
 }
 
-// A Results object returned from the MQTT module's Scanner.Scan().
-type Results struct {
-	Topics map[string][]string `json:"topics,omitempty"`
-}
-
-// scan holds the state for a single scan. This may entail multiple connections.
-// It is used to implement the zgrab2.Scanner interface.
-type scan struct {
-	scanner *Scanner
-	target  *zgrab2.ScanTarget
-	client  paho.Client
-	results Results
-	tls     bool
-}
-
-func (scan *scan) getTLSConfig() (*tls.Config, error) {
-	cfg, err := scan.scanner.config.TLSFlags.GetTLSConfigForTarget(scan.target)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create TLS config for target: %w", err)
-	}
-
-	b, err := cfg.MarshalJSON()
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal zgrab TLS config: %w", err)
-	}
-
-	var t tls.Config
-	if err = json.Unmarshal(b, &t); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal TLS config: %w", err)
-	}
-
-	return &t, nil
-}
-
-func (scan *scan) makeClient() (paho.Client, error) {
-	// TODO: implement support for web-sockets as well?
-	opts := paho.NewClientOptions()
-
-	// Add TLS
-	scheme := "tcp"
-	if scan.scanner.config.UseTLS {
-		scheme = "ssl"
-		cfg, err := scan.getTLSConfig()
-		if err != nil {
-			return nil, err
-		}
-		opts.SetTLSConfig(cfg)
-	}
-
-	// Add broker
-	port := &scan.scanner.config.Port
-	if scan.target.Port != nil {
-		port = scan.target.Port
-	}
-	t := fmt.Sprintf("%s://%s:%d", scheme, scan.target.Host(), *port)
-	opts.AddBroker(t)
-
-	// Add auth details
-	if scan.scanner.config.UserAuth {
-		opts.SetUsername(scan.scanner.config.Username)
-		opts.SetPassword(scan.scanner.config.Password)
-	}
-
-	// TODO: change the dialer to a zgrab2 one.
-	// opts.SetDialer()
-	opts.SetClientID(scan.scanner.config.ClientID)
-	opts.SetCleanSession(true)
-	opts.SetOrderMatters(false)
-	opts.SetAutoReconnect(true)
-	return paho.NewClient(opts), nil
-}
-
-func (scan *scan) Init() (*scan, error) {
-	c, err := scan.makeClient()
-	if err != nil {
-		return nil, err
-	}
-	scan.client = c
-	return scan, nil
-}
-
-func (scan *scan) messageHandler(msgChan chan paho.Message) func(c paho.Client, m paho.Message) {
-	mLimit := scan.scanner.config.LimitMessages
-	tLimit := scan.scanner.config.LimitTopics
-	tCount := make(map[string]int)
-
-	var mu sync.Mutex
-
-	isFull := func(t string) bool {
-		mu.Lock()
-		defer mu.Unlock()
-
-		tc, ok := tCount[t]
-		// if the array does not exist, check the number of topics
-		if !ok && (tLimit > -1 && len(tCount) >= tLimit) {
-			return true
-		}
-
-		// check the number of messages in the topic
-		if mLimit > -1 && tc >= mLimit {
-			return true
-		}
-		return false
-	}
-
-	var addToCount = func(topic string) {
-		mu.Lock()
-		defer mu.Unlock()
-		tCount[topic]++
-	}
-
-	var addMessage = func(c paho.Client, m paho.Message) {
-		topic := m.Topic()
-		if isFull(topic) {
-			c.Unsubscribe(topic)
-			return
-		}
-		addToCount(topic)
-		select {
-		case msgChan <- m:
-			// sent
-		default:
-			//ignore
-		}
-	}
-
-	// We cannot block here, so call a goroutine to handle
-	// the message instead.
-	return func(c paho.Client, m paho.Message) {
-		go addMessage(c, m)
-	}
-}
-
-// Grab starts the scan
-func (scan *scan) Grab() *zgrab2.ScanError {
-	if t := scan.client.Connect(); t.Wait() && t.Error() != nil {
-		return zgrab2.NewScanError(zgrab2.SCAN_CONNECTION_REFUSED, t.Error())
-	}
-	defer scan.client.Disconnect(250)
-
-	subs := strings.Split(scan.scanner.config.SubscribeTopics, scan.scanner.config.TopicsSeparator)
-	filt := make(map[string]byte)
-	for _, topic := range subs {
-		filt[topic] = 2
-	}
-
-	// Limit the number of messages we get
-	msgs := make(chan paho.Message)
-	handler := scan.messageHandler(msgs)
-
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		topics := make(map[string][]string)
-		for m := range msgs {
-			// handle here to addd the results to the scan
-			msg := topics[m.Topic()]
-			msg = append(msg, string(m.Payload()))
-			topics[m.Topic()] = msg
-		}
-		scan.results.Topics = topics
-	}()
-
-	if t := scan.client.SubscribeMultiple(filt, handler); t.Wait() && t.Error() != nil {
-		return zgrab2.NewScanError(zgrab2.SCAN_CONNECTION_REFUSED, t.Error())
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), scan.scanner.config.Timeout)
-	defer cancel()
-
-	<-ctx.Done()
-	scan.client.Unsubscribe(subs...)
-	close(msgs)
-	wg.Wait()
-	return nil
-}
-
-func (scan *scan) handleMessages(msgs chan paho.Message, wg *sync.WaitGroup) {
-
+// A Result object returned from the MQTT module's Scanner.Scan().
+type Result struct {
+	Topics       map[string][]string `json:"topics,omitempty"`
+	Certificates [][]byte            `json:"certificate,omitempty"`
+	Scheme       string              `json:"scheme"`
 }
 
 // Scanner implements the zgrab2.Scanner interface.
 type Scanner struct {
-	config *Flags
+	config  *Flags
+	builder *ScanBuilder
 }
 
 // Protocol returns the protocol identifer for the scanner.
@@ -259,6 +78,7 @@ func (scanner *Scanner) Protocol() string {
 // Init initializes the Scanner.
 func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	scanner.config = flags.(*Flags)
+	scanner.builder = NewScanBuilder(scanner)
 	return nil
 }
 
@@ -282,45 +102,42 @@ func (module *Module) NewFlags() interface{} {
 	return new(Flags)
 }
 
-func (scanner *Scanner) newMQTTScan(t *zgrab2.ScanTarget, tls bool) (*scan, error) {
-	ret := &scan{
-		scanner: scanner,
-		target:  t,
-		results: Results{
-			Topics: make(map[string][]string),
-		},
-		tls: tls,
+func (s *Scanner) getRetryIterator() []string {
+	var schemes []string
+	var base string
+	switch {
+	case s.config.UseTLS:
+		base = "ssl"
+	default:
+		base = "tcp"
 	}
-	return ret.Init()
+
+	schemes = append(schemes, base)
+	if s.config.RetryTLS && !s.config.UseTLS {
+		schemes = append(schemes, "ssl")
+	}
+	return schemes
+}
+
+func (s *Scanner) scan(t *zgrab2.ScanTarget, scheme string) (zgrab2.ScanStatus, interface{}, error) {
+	scan := s.builder.Build(t, scheme)
+	if err := scan.Grab(); err != nil {
+		return err.Unpack(scan.result)
+	}
+	return zgrab2.SCAN_SUCCESS, scan.result, nil
 }
 
 // Scan implements the zgrab2.Scanner interface and performs the full scan of
 // the target. If the scanner is configured to follow redirects, this may entail
 // multiple TCP connections to hosts other than target.
-func (scanner *Scanner) Scan(t zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
-	// Start the scan
-	scan, err := scanner.newMQTTScan(&t, scanner.config.UseTLS)
-	if err != nil {
-		return zgrab2.SCAN_APPLICATION_ERROR, nil, err
-	}
-
-	scanerr := scan.Grab()
-	if scanerr != nil {
-		if scanner.config.RetryTLS && !scanner.config.UseTLS {
-			retry, err := scanner.newMQTTScan(&t, true)
-			if err != nil {
-				return zgrab2.SCAN_APPLICATION_ERROR, nil, err
-			}
-
-			retryError := retry.Grab()
-			if retryError != nil {
-				return retryError.Unpack(&scan.results)
-			}
-			return zgrab2.SCAN_SUCCESS, &retry.results, nil
+func (s *Scanner) Scan(t zgrab2.ScanTarget) (status zgrab2.ScanStatus, results interface{}, err error) {
+	schemes := s.getRetryIterator()
+	for _, scheme := range schemes {
+		if status, results, err = s.scan(&t, scheme); status == zgrab2.SCAN_SUCCESS {
+			return
 		}
-		return scanerr.Unpack(&scan.results)
 	}
-	return zgrab2.SCAN_SUCCESS, &scan.results, nil
+	return
 }
 
 // RegisterModule is called by modules/mqtt.go to register this module with the

@@ -82,22 +82,20 @@ type scan struct {
 func (scan *scan) getTLSConfig() (*tls.Config, error) {
 	cfg, err := scan.scanner.config.TLSFlags.GetTLSConfigForTarget(scan.target)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create TLS config for target: %w", err)
 	}
 
-	var (
-		b []byte
-		t *tls.Config
-	)
-	if b, err = cfg.MarshalJSON(); err != nil {
-		return nil, err
+	b, err := cfg.MarshalJSON()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal zgrab TLS config: %w", err)
 	}
 
+	var t tls.Config
 	if err = json.Unmarshal(b, &t); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to unmarshal TLS config: %w", err)
 	}
 
-	return t, nil
+	return &t, nil
 }
 
 func (scan *scan) makeClient() (paho.Client, error) {

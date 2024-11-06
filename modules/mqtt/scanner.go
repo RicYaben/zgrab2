@@ -100,7 +100,7 @@ func (scan *scan) getTLSConfig() (*tls.Config, error) {
 
 func (scan *scan) makeClient() (paho.Client, error) {
 	// TODO: implement support for web-sockets as well?
-	o := paho.NewClientOptions()
+	opts := paho.NewClientOptions()
 
 	// Add TLS
 	scheme := "tcp"
@@ -110,7 +110,7 @@ func (scan *scan) makeClient() (paho.Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		o.SetTLSConfig(cfg)
+		opts.SetTLSConfig(cfg)
 	}
 
 	// Add broker
@@ -119,18 +119,21 @@ func (scan *scan) makeClient() (paho.Client, error) {
 		port = scan.target.Port
 	}
 	t := fmt.Sprintf("%s://%s:%d", scheme, scan.target.Host(), *port)
-	o.AddBroker(t)
+	opts.AddBroker(t)
 
 	// Add auth details
 	if scan.scanner.config.UserAuth {
-		o.SetUsername(scan.scanner.config.Username)
-		o.SetPassword(scan.scanner.config.Password)
+		opts.SetUsername(scan.scanner.config.Username)
+		opts.SetPassword(scan.scanner.config.Password)
 	}
 
-	o.SetClientID(scan.scanner.config.ClientID)
-	o.SetCleanSession(true)
-	o.SetOrderMatters(false)
-	return paho.NewClient(o), nil
+	// TODO: change the dialer to a zgrab2 one.
+	// opts.SetDialer()
+	opts.SetClientID(scan.scanner.config.ClientID)
+	opts.SetCleanSession(true)
+	opts.SetOrderMatters(false)
+	opts.SetAutoReconnect(true)
+	return paho.NewClient(opts), nil
 }
 
 func (scan *scan) Init() (*scan, error) {
@@ -148,7 +151,11 @@ func (scan *scan) messageHandler(msgChan chan paho.Message) func(c paho.Client, 
 	tCount := make(map[string]int)
 
 	var mu sync.Mutex
+
 	isFull := func(t string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+
 		tc, ok := tCount[t]
 		// if the array does not exist, check the number of topics
 		if !ok && (tLimit > -1 && len(tCount) >= tLimit) {
@@ -162,23 +169,31 @@ func (scan *scan) messageHandler(msgChan chan paho.Message) func(c paho.Client, 
 		return false
 	}
 
-	return func(c paho.Client, m paho.Message) {
-		topic := m.Topic()
+	var addToCount = func(topic string) {
 		mu.Lock()
+		defer mu.Unlock()
+		tCount[topic]++
+	}
+
+	var addMessage = func(c paho.Client, m paho.Message) {
+		topic := m.Topic()
 		if isFull(topic) {
-			c.Unsubscribe(m.Topic())
-			mu.Unlock()
+			c.Unsubscribe(topic)
 			return
 		}
-		tCount[topic]++
-		mu.Unlock()
-
+		addToCount(topic)
 		select {
 		case msgChan <- m:
 			// sent
 		default:
 			//ignore
 		}
+	}
+
+	// We cannot block here, so call a goroutine to handle
+	// the message instead.
+	return func(c paho.Client, m paho.Message) {
+		go addMessage(c, m)
 	}
 }
 
@@ -199,6 +214,10 @@ func (scan *scan) Grab() *zgrab2.ScanError {
 	msgs := make(chan paho.Message)
 	handler := scan.messageHandler(msgs)
 
+	var wg *sync.WaitGroup
+	wg.Add(1)
+	go scan.handleMessages(msgs, wg)
+
 	if t := scan.client.SubscribeMultiple(filt, handler); t.Wait() && t.Error() != nil {
 		return zgrab2.NewScanError(zgrab2.SCAN_CONNECTION_REFUSED, t.Error())
 	}
@@ -206,11 +225,15 @@ func (scan *scan) Grab() *zgrab2.ScanError {
 	ctx, cancel := context.WithTimeout(context.Background(), scan.scanner.config.Timeout)
 	defer cancel()
 
-	go func() {
-		<-ctx.Done()
-		scan.client.Unsubscribe(subs...)
-		close(msgs)
-	}()
+	<-ctx.Done()
+	scan.client.Unsubscribe(subs...)
+	close(msgs)
+	wg.Wait()
+	return nil
+}
+
+func (scan *scan) handleMessages(msgs chan paho.Message, wg *sync.WaitGroup) {
+	defer wg.Done()
 
 	topics := make(map[string][]string)
 	for m := range msgs {
@@ -220,7 +243,6 @@ func (scan *scan) Grab() *zgrab2.ScanError {
 		topics[m.Topic()] = msg
 	}
 	scan.results.Topics = topics
-	return nil
 }
 
 // Scanner implements the zgrab2.Scanner interface.

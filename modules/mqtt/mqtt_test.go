@@ -20,13 +20,13 @@ func (t *mqttTester) getScanner() (*Scanner, error) {
 
 	// Identifiers
 	flags.ClientID = "testClient" // MQTT-specific
-	flags.ClientRandom = "blabla" // on the TCP handshake
 
 	// Client and user
 	flags.SubscribeTopics = "#,$SYS/#"
 	flags.TopicsSeparator = ","
 	flags.LimitMessages = 1
 	flags.LimitTopics = 10
+	flags.UseTLS = true
 
 	// Attempt anonymous auth with
 	// an empty user and password as the
@@ -69,7 +69,7 @@ func (t *mqttTester) runTest(test *testing.T, name string) {
 var tests = map[string]*mqttTester{
 	"success": {
 		addr:           "test.mosquitto.org",
-		port:           1883,
+		port:           8883,
 		expectedStatus: zgrab2.SCAN_SUCCESS,
 	},
 }

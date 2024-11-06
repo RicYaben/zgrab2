@@ -73,7 +73,7 @@ func (s *scan) getClientOptions() (*paho.ClientOptions, error) {
 		}
 		opts.SetTLSConfig(tls)
 	case "wss":
-		// ignore for now
+		panic("not implemented yet")
 	default:
 		// ignore for now
 	}
@@ -140,12 +140,12 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 	return handler
 }
 
-func (s *scan) wait(client paho.Client, topics []string) {
+func (s *scan) wait(client paho.Client) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.scanner.config.Timeout)
 	defer cancel()
 
 	<-ctx.Done()
-	client.Unsubscribe(topics...)
+	client.Unsubscribe(s.topics...)
 	client.Disconnect(250)
 }
 
@@ -155,23 +155,18 @@ func (s *scan) Grab() *zgrab2.ScanError {
 		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
 	}
 
-	handler := s.makeMessageHandler()
-	topics := strings.Split(s.scanner.config.SubscribeTopics, s.scanner.config.TopicsSeparator)
-	filters := make(map[string]byte)
-	for _, topic := range topics {
-		filters[topic] = 2
-	}
-
 	client := paho.NewClient(options)
 	if t := client.Connect(); t.Wait() && t.Error() != nil {
 		return zgrab2.NewScanError(zgrab2.SCAN_CONNECTION_REFUSED, t.Error())
 	}
 
-	if t := client.SubscribeMultiple(filters, handler); t.Wait() && t.Error() != nil {
+	s.SetFilters()
+	handler := s.makeMessageHandler()
+	if t := client.SubscribeMultiple(s.filters, handler); t.Wait() && t.Error() != nil {
 		return zgrab2.NewScanError(zgrab2.SCAN_CONNECTION_REFUSED, t.Error())
 	}
 
-	s.wait(client, topics)
+	s.wait(client)
 	return nil
 }
 

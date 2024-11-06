@@ -214,9 +214,19 @@ func (scan *scan) Grab() *zgrab2.ScanError {
 	msgs := make(chan paho.Message)
 	handler := scan.messageHandler(msgs)
 
-	var wg *sync.WaitGroup
+	wg := &sync.WaitGroup{}
 	wg.Add(1)
-	go scan.handleMessages(msgs, wg)
+	go func() {
+		defer wg.Done()
+		topics := make(map[string][]string)
+		for m := range msgs {
+			// handle here to addd the results to the scan
+			msg := topics[m.Topic()]
+			msg = append(msg, string(m.Payload()))
+			topics[m.Topic()] = msg
+		}
+		scan.results.Topics = topics
+	}()
 
 	if t := scan.client.SubscribeMultiple(filt, handler); t.Wait() && t.Error() != nil {
 		return zgrab2.NewScanError(zgrab2.SCAN_CONNECTION_REFUSED, t.Error())
@@ -233,16 +243,7 @@ func (scan *scan) Grab() *zgrab2.ScanError {
 }
 
 func (scan *scan) handleMessages(msgs chan paho.Message, wg *sync.WaitGroup) {
-	defer wg.Done()
 
-	topics := make(map[string][]string)
-	for m := range msgs {
-		// handle here to addd the results to the scan
-		msg := topics[m.Topic()]
-		msg = append(msg, string(m.Payload()))
-		topics[m.Topic()] = msg
-	}
-	scan.results.Topics = topics
 }
 
 // Scanner implements the zgrab2.Scanner interface.

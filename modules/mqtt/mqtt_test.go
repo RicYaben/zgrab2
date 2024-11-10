@@ -3,6 +3,7 @@ package mqtt
 
 import (
 	"testing"
+	"time"
 
 	"github.com/zmap/zgrab2"
 )
@@ -26,7 +27,7 @@ func (t *mqttTester) getScanner() (*Scanner, error) {
 	flags.TopicsSeparator = ","
 	flags.LimitMessages = 1
 	flags.LimitTopics = 10
-	flags.UseTLS = true
+	flags.Timeout = 10 * time.Second
 
 	// Attempt anonymous auth with
 	// an empty user and password as the
@@ -69,7 +70,7 @@ func (t *mqttTester) runTest(test *testing.T, name string) {
 var tests = map[string]*mqttTester{
 	"success": {
 		addr:           "test.mosquitto.org",
-		port:           8883,
+		port:           1883,
 		expectedStatus: zgrab2.SCAN_SUCCESS,
 	},
 }

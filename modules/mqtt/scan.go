@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 	"github.com/zmap/zgrab2"
@@ -62,7 +61,6 @@ func (s *scan) getClientOptions() (*paho.ClientOptions, error) {
 	opts := paho.NewClientOptions().
 		SetClientID(s.scanner.config.ClientID).
 		SetCleanSession(true).
-		SetOrderMatters(false).
 		SetAutoReconnect(true)
 
 	switch s.scheme {
@@ -74,8 +72,6 @@ func (s *scan) getClientOptions() (*paho.ClientOptions, error) {
 		opts.SetTLSConfig(tls)
 	case "wss":
 		panic("not implemented yet")
-	default:
-		// ignore for now
 	}
 
 	if s.scanner.config.UserAuth {
@@ -102,7 +98,6 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 	tLimit := s.scanner.config.LimitTopics
 	tCount := make(map[string]int)
 
-	var mu sync.Mutex
 	var isFull = func(topic string) bool {
 		tc, ok := tCount[topic]
 		// if the array does not exist, check the number of topics
@@ -117,10 +112,7 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 		return false
 	}
 
-	do := func(c paho.Client, m paho.Message) {
-		mu.Lock()
-		defer mu.Unlock()
-
+	var handler = func(c paho.Client, m paho.Message) {
 		topic := m.Topic()
 		if isFull(topic) {
 			c.Unsubscribe(topic)
@@ -131,10 +123,6 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 		msg := s.result.Topics[m.Topic()]
 		msg = append(msg, string(m.Payload()))
 		s.result.Topics[m.Topic()] = msg
-	}
-
-	handler := func(c paho.Client, m paho.Message) {
-		go do(c, m)
 	}
 
 	return handler

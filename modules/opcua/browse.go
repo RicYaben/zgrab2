@@ -2,11 +2,11 @@ package opcua
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
-	"github.com/pkg/errors"
 	"github.com/zmap/zgrab2"
 )
 
@@ -145,7 +145,7 @@ func newBrowser(level uint, ctx context.Context) *browser {
 
 func (b *browser) setLevel(level uint) {
 	if level > b.maxLevel {
-		panic(errors.Errorf("failed to set browser level. The maximum level is %d, but attempted to set %d", b.maxLevel, level))
+		panic(fmt.Errorf("failed to set browser level. The maximum level is %d, but attempted to set %d", b.maxLevel, level))
 	}
 	b.level = level
 }
@@ -189,14 +189,14 @@ func (b *browser) Node(n *opcua.Node) (*NodeDef, error) {
 func (b *browser) getChildren(refType uint32, n *opcua.Node, path string, level int) ([]*NodeDef, error) {
 	refs, err := n.ReferencedNodes(b.ctx, refType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
 	if err != nil {
-		return nil, errors.Errorf("References: %d: %s", refType, err)
+		return nil, fmt.Errorf("failed to set reference %d: %w", refType, err)
 	}
 
 	var nodes []*NodeDef
 	for _, rn := range refs {
 		children, err := b.browse(rn, path, level+1)
 		if err != nil {
-			return nil, errors.Errorf("browse children: %s", err)
+			return nil, fmt.Errorf("failed to browse children: %w", err)
 		}
 		nodes = append(nodes, children...)
 	}

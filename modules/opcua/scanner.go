@@ -213,7 +213,7 @@ func (s *scan) authAndBrowse(r *EndpointResult) {
 			id, _ := ua.ParseNodeID("i=84")
 			nodes, err := s.browser.browse(authedClient.Node(id), "", 0)
 			if err != nil {
-				log.Fatal("failed to browse nodes: %w", err)
+				log.Errorf("failed to browse nodes: %v", err)
 				return
 			}
 			r.Nodes = nodes

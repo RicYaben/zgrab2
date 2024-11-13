@@ -196,7 +196,7 @@ func (b *browser) getChildren(refType uint32, n *opcua.Node, path string, level 
 	for _, rn := range refs {
 		children, err := b.browse(rn, path, level+1)
 		if err != nil {
-			return nil, fmt.Errorf("failed to browse children: %w", err)
+			return nodes, fmt.Errorf("failed to browse children: %w", err)
 		}
 		nodes = append(nodes, children...)
 	}
@@ -219,7 +219,7 @@ func (b *browser) browse(n *opcua.Node, path string, level int) ([]*NodeDef, err
 	for _, refType := range []uint32{id.HasComponent, id.Organizes, id.HasProperty} {
 		nChilds, err := b.getChildren(refType, n, def.Path, level)
 		if err != nil {
-			return nil, err
+			return nodes, err
 		}
 		nodes = append(nodes, nChilds...)
 	}

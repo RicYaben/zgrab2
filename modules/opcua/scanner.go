@@ -156,7 +156,9 @@ func (s *scan) Grab() *zgrab2.ScanError {
 
 	// Authenticate to each endpoints
 	for _, r := range resEps {
-		s.authAndBrowse(r)
+		if err := s.authAndBrowse(r); err != nil {
+			return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+		}
 	}
 	return nil
 }
@@ -182,7 +184,7 @@ func (s *scan) clientOptions(ep *ua.EndpointDescription, auth string) []opcua.Op
 	}
 }
 
-func (s *scan) authAndBrowse(r *EndpointResult) {
+func (s *scan) authAndBrowse(r *EndpointResult) error {
 	ep := r.EndpointDescription
 
 	var authedClient *opcua.Client
@@ -207,18 +209,18 @@ func (s *scan) authAndBrowse(r *EndpointResult) {
 	if authedClient != nil {
 		select {
 		case <-s.ctx.Done():
-			return
+			return nil
 		default:
 			r.Namespaces = authedClient.Namespaces()
 			id, _ := ua.ParseNodeID("i=84")
 			nodes, err := s.browser.browse(authedClient.Node(id), "", 0)
-			if err != nil {
-				log.Errorf("failed to browse nodes: %v", err)
-				return
-			}
 			r.Nodes = nodes
+			if err != nil {
+				return fmt.Errorf("failed to browse nodes: %w", err)
+			}
 		}
 	}
+	return nil
 }
 
 func (s *Scanner) newOPCUAscan(ep string) *scan {

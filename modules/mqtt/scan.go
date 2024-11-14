@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 	"github.com/zmap/zgrab2"
@@ -112,10 +113,17 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 		return false
 	}
 
+	var mu sync.Mutex
 	var handler = func(c paho.Client, m paho.Message) {
+		mu.Lock()
+		defer mu.Unlock()
+
 		topic := m.Topic()
 		if isFull(topic) {
-			c.Unsubscribe(topic)
+			if t := c.Unsubscribe(topic); t.Wait() && t.Error() != nil {
+				// ignore
+				return
+			}
 			return
 		}
 

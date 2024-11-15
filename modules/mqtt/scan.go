@@ -2,6 +2,7 @@ package mqtt
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -10,7 +11,6 @@ import (
 	"sync"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
-	"github.com/google/uuid"
 	"github.com/zmap/zgrab2"
 )
 
@@ -60,13 +60,33 @@ func (s *scan) getBrokerURL() string {
 	return fmt.Sprintf("%s://%s:%d", s.scheme, s.target.Host(), *port)
 }
 
-func (s *scan) getClientOptions() (*paho.ClientOptions, error) {
-	// we may jump into the same host. Avoid weird issues
-	id := uuid.New()
-	uid := fmt.Sprintf("%s-%s", s.scanner.config.ClientID, id[:6])
+func (s *scan) randomizeClientID() string {
+	const (
+		charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		maxLen  = 23 // as defined by MQTT 3.1
+	)
 
+	if len(s.scanner.config.ClientID) > maxLen {
+		return s.scanner.config.ClientID[:maxLen]
+	}
+
+	var (
+		suffix []byte
+		cap    = maxLen - len(s.scanner.config.ClientID)
+	)
+
+	for i := 0; i < cap; i++ {
+		r := make([]byte, 1)
+		rand.Read(r)
+		suffix = append(suffix, charset[r[0]%byte(len(charset))])
+	}
+	return s.scanner.config.ClientID + string(suffix)
+}
+
+func (s *scan) getClientOptions() (*paho.ClientOptions, error) {
+	id := s.randomizeClientID()
 	opts := paho.NewClientOptions().
-		SetClientID(uid).
+		SetClientID(id).
 		SetCleanSession(true).
 		SetAutoReconnect(true).
 		SetOrderMatters(false)

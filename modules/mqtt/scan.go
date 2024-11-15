@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
+	"github.com/google/uuid"
 	"github.com/zmap/zgrab2"
 )
 
@@ -59,8 +60,12 @@ func (s *scan) getBrokerURL() string {
 }
 
 func (s *scan) getClientOptions() (*paho.ClientOptions, error) {
+	// we may jump into the same host. Avoid weird issues
+	id := uuid.New()
+	uid := fmt.Sprintf("%s-%s", s.scanner.config.ClientID, id[:6])
+
 	opts := paho.NewClientOptions().
-		SetClientID(s.scanner.config.ClientID).
+		SetClientID(uid).
 		SetCleanSession(true).
 		SetAutoReconnect(true).
 		SetOrderMatters(false)
@@ -121,7 +126,8 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 	var handler = func(c paho.Client, m paho.Message) {
 		topic := m.Topic()
 		if isFull(topic) {
-			// ignore the message
+			// unsubscribe and ignore the message
+			c.Unsubscribe(topic)
 			return
 		}
 

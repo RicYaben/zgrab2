@@ -40,6 +40,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/eclipse/paho.mqtt.golang v1.5.0
 	github.com/golang-jwt/jwt v3.2.2+incompatible
+	github.com/google/uuid v1.6.0
 	github.com/gopcua/opcua v0.5.3
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect

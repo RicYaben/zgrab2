@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 	"github.com/zmap/zgrab2"
@@ -23,7 +22,6 @@ type scan struct {
 	filters map[string]byte
 
 	result Result
-	mu     sync.Mutex
 }
 
 func (s *scan) getTLSConfig() (*tls.Config, error) {
@@ -88,8 +86,7 @@ func (s *scan) getClientOptions() (*paho.ClientOptions, error) {
 	opts := paho.NewClientOptions().
 		SetClientID(id).
 		SetCleanSession(true).
-		SetAutoReconnect(true).
-		SetOrderMatters(false)
+		SetAutoReconnect(true)
 
 	switch s.scheme {
 	case "ssl":
@@ -127,9 +124,6 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 	tCount := make(map[string]int)
 
 	var isFull = func(topic string) bool {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-
 		tc, ok := tCount[topic]
 		// if the array does not exist, check the number of topics
 		if !ok && (tLimit > -1 && len(tCount) >= tLimit) {
@@ -221,7 +215,6 @@ func (b *ScanBuilder) Build(t *zgrab2.ScanTarget, scheme string) *scan {
 			Scheme:       scheme,
 			Certificates: make([][]byte, 0),
 		},
-		mu: sync.Mutex{},
 	}
 	return scan
 }

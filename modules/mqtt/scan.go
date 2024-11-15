@@ -127,7 +127,7 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 		topic := m.Topic()
 		if isFull(topic) {
 			// unsubscribe and ignore the message
-			//c.Unsubscribe(topic)
+			c.Unsubscribe(topic)
 			return
 		}
 

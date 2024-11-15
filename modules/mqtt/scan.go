@@ -62,7 +62,8 @@ func (s *scan) getClientOptions() (*paho.ClientOptions, error) {
 	opts := paho.NewClientOptions().
 		SetClientID(s.scanner.config.ClientID).
 		SetCleanSession(true).
-		SetAutoReconnect(true)
+		SetAutoReconnect(true).
+		SetOrderMatters(false)
 
 	switch s.scheme {
 	case "ssl":
@@ -99,7 +100,11 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 	tLimit := s.scanner.config.LimitTopics
 	tCount := make(map[string]int)
 
+	var mu sync.Mutex
 	var isFull = func(topic string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+
 		tc, ok := tCount[topic]
 		// if the array does not exist, check the number of topics
 		if !ok && (tLimit > -1 && len(tCount) >= tLimit) {
@@ -113,17 +118,10 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 		return false
 	}
 
-	var mu sync.Mutex
 	var handler = func(c paho.Client, m paho.Message) {
-		mu.Lock()
-		defer mu.Unlock()
-
 		topic := m.Topic()
 		if isFull(topic) {
-			if t := c.Unsubscribe(topic); t.Wait() && t.Error() != nil {
-				// ignore
-				return
-			}
+			// ignore the message
 			return
 		}
 
@@ -140,12 +138,23 @@ func (s *scan) wait(client paho.Client) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.scanner.config.Timeout)
 	defer cancel()
 
+	// timeout, finish now
 	<-ctx.Done()
+	// do **not** wait for the unsubscribe to return anything
 	client.Unsubscribe(s.topics...)
-	client.Disconnect(250)
 }
 
 func (s *scan) Grab() *zgrab2.ScanError {
+	defer func() {
+		// Stop panic
+		// The paho client tends to panic on:
+		// github.com/eclipse/paho%2emqtt%2egolang.startIncomingComms.func1()
+		// ...github.com/eclipse/paho.mqtt.golang@v1.5.0/net.go:212 +0x101d
+		if r := recover(); r != nil {
+			s.result.Error = r
+		}
+	}()
+
 	options, err := s.getClientOptions()
 	if err != nil {
 		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
@@ -155,15 +164,19 @@ func (s *scan) Grab() *zgrab2.ScanError {
 	if t := client.Connect(); t.Wait() && t.Error() != nil {
 		return zgrab2.NewScanError(zgrab2.SCAN_CONNECTION_REFUSED, t.Error())
 	}
+	defer client.Disconnect(250)
 
-	s.SetFilters()
-	handler := s.makeMessageHandler()
-	if t := client.SubscribeMultiple(s.filters, handler); t.Wait() && t.Error() != nil {
-		return zgrab2.NewScanError(zgrab2.SCAN_CONNECTION_REFUSED, t.Error())
-	}
+	var subErr *zgrab2.ScanError
+	go func() {
+		s.SetFilters()
+		handler := s.makeMessageHandler()
+		if t := client.SubscribeMultiple(s.filters, handler); t.Wait() && t.Error() != nil {
+			subErr = zgrab2.NewScanError(zgrab2.SCAN_CONNECTION_REFUSED, t.Error())
+		}
+	}()
 
 	s.wait(client)
-	return nil
+	return subErr
 }
 
 type ScanBuilder struct {

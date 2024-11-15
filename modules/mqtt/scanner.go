@@ -62,6 +62,7 @@ type Result struct {
 	Topics       map[string][]string `json:"topics,omitempty"`
 	Certificates [][]byte            `json:"certificate,omitempty"`
 	Scheme       string              `json:"scheme"`
+	Error        any                 `json:"error,omitempty"`
 }
 
 // Scanner implements the zgrab2.Scanner interface.

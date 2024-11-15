@@ -23,6 +23,7 @@ type scan struct {
 	filters map[string]byte
 
 	result Result
+	mu     sync.Mutex
 }
 
 func (s *scan) getTLSConfig() (*tls.Config, error) {
@@ -105,10 +106,9 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 	tLimit := s.scanner.config.LimitTopics
 	tCount := make(map[string]int)
 
-	mu := &sync.Mutex{}
 	var isFull = func(topic string) bool {
-		mu.Lock()
-		defer mu.Unlock()
+		s.mu.Lock()
+		defer s.mu.Unlock()
 
 		tc, ok := tCount[topic]
 		// if the array does not exist, check the number of topics

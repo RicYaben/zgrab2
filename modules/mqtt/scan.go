@@ -201,6 +201,7 @@ func (b *ScanBuilder) Build(t *zgrab2.ScanTarget, scheme string) *scan {
 			Scheme:       scheme,
 			Certificates: make([][]byte, 0),
 		},
+		mu: sync.Mutex{},
 	}
 	return scan
 }

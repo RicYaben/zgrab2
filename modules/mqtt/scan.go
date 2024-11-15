@@ -127,7 +127,7 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 		topic := m.Topic()
 		if isFull(topic) {
 			// unsubscribe and ignore the message
-			c.Unsubscribe(topic)
+			//c.Unsubscribe(topic)
 			return
 		}
 
@@ -172,17 +172,12 @@ func (s *scan) Grab() *zgrab2.ScanError {
 	}
 	defer client.Disconnect(250)
 
-	var subErr *zgrab2.ScanError
-	go func() {
-		s.SetFilters()
-		handler := s.makeMessageHandler()
-		if t := client.SubscribeMultiple(s.filters, handler); t.Wait() && t.Error() != nil {
-			subErr = zgrab2.NewScanError(zgrab2.SCAN_CONNECTION_REFUSED, t.Error())
-		}
-	}()
+	s.SetFilters()
+	handler := s.makeMessageHandler()
+	client.SubscribeMultiple(s.filters, handler)
 
 	s.wait(client)
-	return subErr
+	return nil
 }
 
 type ScanBuilder struct {

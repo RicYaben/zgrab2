@@ -105,7 +105,7 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 	tLimit := s.scanner.config.LimitTopics
 	tCount := make(map[string]int)
 
-	var mu sync.Mutex
+	mu := &sync.Mutex{}
 	var isFull = func(topic string) bool {
 		mu.Lock()
 		defer mu.Unlock()

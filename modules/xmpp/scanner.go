@@ -10,7 +10,6 @@ import (
 
 type Flags struct {
 	zgrab2.BaseFlags
-	zgrab2.UDPFlags
 }
 
 type Result struct {
@@ -96,7 +95,7 @@ type scan struct {
 }
 
 func (scan *scan) Grab() *zgrab2.ScanError {
-	conn, err := scan.target.OpenUDP(&scan.scanner.config.BaseFlags, &scan.scanner.config.UDPFlags)
+	conn, err := scan.target.Open(&scan.scanner.config.BaseFlags)
 	if err != nil {
 		return zgrab2.NewScanError(zgrab2.TryGetScanStatus(err), err)
 	}

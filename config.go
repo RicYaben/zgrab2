@@ -1,6 +1,7 @@
 package zgrab2
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 // Config is the high level framework options that will be parsed
 // from the command line
 type Config struct {
+	BlocklistFileName  string          `short:"b" long:"blocklist-file" default:"-" description:"Blocklist filename, use - to omit"`
 	OutputFileName     string          `short:"o" long:"output-file" default:"-" description:"Output filename, use - for stdout"`
 	InputFileName      string          `short:"f" long:"input-file" default:"-" description:"Input filename, use - for stdin"`
 	MetaFileName       string          `short:"m" long:"metadata-file" default:"-" description:"Metadata filename, use - for stderr"`
@@ -33,6 +35,8 @@ type Config struct {
 	inputTargets       InputTargetsFunc
 	outputResults      OutputResultsFunc
 	localAddr          *net.TCPAddr
+	// --
+	blocklistFile *os.File
 }
 
 // SetInputFunc sets the target input function to the provided function.
@@ -64,6 +68,15 @@ func validateFrameworkConfiguration() {
 		log.SetOutput(config.logFile)
 	}
 	SetInputFunc(InputTargetsCSV)
+
+	if config.BlocklistFileName == "-" {
+		config.blocklistFile = nil
+	} else {
+		var err error
+		if config.blocklistFile, err = os.Open(config.BlocklistFileName); err != nil {
+			log.Fatal(fmt.Errorf("failed to open blocklist file: %w", err))
+		}
+	}
 
 	if config.InputFileName == "-" {
 		config.inputFile = os.Stdin

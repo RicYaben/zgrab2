@@ -89,12 +89,17 @@ func duplicateIP(ip net.IP) net.IP {
 // InputTargetsCSV is an InputTargetsFunc that calls GetTargetsCSV with
 // the CSV file provided on the command line.
 func InputTargetsCSV(ch chan<- ScanTarget) error {
-	return GetTargetsCSV(config.inputFile, ch)
+	return GetTargetsCSV(config.inputFile, config.blocklistFile, ch)
 }
 
 // GetTargetsCSV reads targets from a CSV source, generates ScanTargets,
 // and delivers them to the provided channel.
-func GetTargetsCSV(source io.Reader, ch chan<- ScanTarget) error {
+func GetTargetsCSV(source io.Reader, blocklistSource io.Reader, ch chan<- ScanTarget) error {
+	blocklist, err := LoadBlocklist(blocklistSource)
+	if err != nil {
+		return fmt.Errorf("failed to load blocklist: %w", err)
+	}
+
 	csvreader := csv.NewReader(source)
 	csvreader.Comment = '#'
 	csvreader.FieldsPerRecord = -1 // variable
@@ -127,6 +132,10 @@ func GetTargetsCSV(source io.Reader, ch chan<- ScanTarget) error {
 			if ipnet.Mask != nil {
 				// expand CIDR block into one target for each IP
 				for ip = ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); incrementIP(ip) {
+					if blocklist.Contains(ip) {
+						continue
+					}
+
 					if port == "" {
 						ch <- ScanTarget{IP: duplicateIP(ip), Domain: domain, Tags: tag}
 					} else {
@@ -138,6 +147,11 @@ func GetTargetsCSV(source io.Reader, ch chan<- ScanTarget) error {
 				ip = ipnet.IP
 			}
 		}
+
+		if blocklist.Contains(ip) {
+			continue
+		}
+
 		if port == "" {
 			ch <- ScanTarget{IP: ip, Domain: domain, Tags: tag}
 		} else {

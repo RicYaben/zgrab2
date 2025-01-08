@@ -164,7 +164,7 @@ func TestParseCSVTarget(t *testing.T) {
 
 func TestGetTargetsCSV(t *testing.T) {
 	blocklist := `# Comment
-0.0.0.0/8           # RFC1122: "This host on this network"
+0.0.0.0/8           # RFC1122: This host on this network
 10.0.0.0/8          # RFC1918: Private-Use
 100.64.0.0/10       # RFC6598: Shared Address Space
 127.0.0.0/8         # RFC1122: Loopback
@@ -195,20 +195,20 @@ example.com
 `
 	port := uint(443)
 	expected := []ScanTarget{
-		ScanTarget{IP: net.ParseIP("11.0.0.1"), Domain: "example.com", Tags: "tag"},
-		ScanTarget{IP: net.ParseIP("11.0.0.1"), Domain: "example.com"},
-		ScanTarget{IP: net.ParseIP("11.0.0.1")},
-		ScanTarget{Domain: "example.com"},
-		ScanTarget{Domain: "example.com"},
-		ScanTarget{IP: net.ParseIP("2.2.2.0"), Tags: "tag"},
-		ScanTarget{IP: net.ParseIP("2.2.2.1"), Tags: "tag"},
-		ScanTarget{IP: net.ParseIP("2.2.2.2"), Tags: "tag"},
-		ScanTarget{IP: net.ParseIP("2.2.2.3"), Tags: "tag"},
-		ScanTarget{IP: net.ParseIP("11.0.0.1"), Domain: "example.com", Tags: "tag", Port: &port},
-		ScanTarget{IP: net.ParseIP("11.0.0.1"), Port: &port},
+		{IP: net.ParseIP("11.0.0.1"), Domain: "example.com", Tags: "tag"},
+		{IP: net.ParseIP("11.0.0.1"), Domain: "example.com"},
+		{IP: net.ParseIP("11.0.0.1")},
+		{Domain: "example.com"},
+		{Domain: "example.com"},
+		{IP: net.ParseIP("2.2.2.0"), Tags: "tag"},
+		{IP: net.ParseIP("2.2.2.1"), Tags: "tag"},
+		{IP: net.ParseIP("2.2.2.2"), Tags: "tag"},
+		{IP: net.ParseIP("2.2.2.3"), Tags: "tag"},
+		{IP: net.ParseIP("11.0.0.1"), Domain: "example.com", Tags: "tag", Port: &port},
+		{IP: net.ParseIP("11.0.0.1"), Port: &port},
 	}
 
-	ch := make(chan ScanTarget, 0)
+	ch := make(chan ScanTarget)
 	go func() {
 		err := GetTargetsCSV(strings.NewReader(input), strings.NewReader(blocklist), ch)
 		if err != nil {

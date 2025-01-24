@@ -59,10 +59,14 @@ func (module *Module) Description() string {
 
 // A Result object returned from the MQTT module's Scanner.Scan().
 type Result struct {
-	Topics       map[string][]string `json:"topics,omitempty"`
-	Certificates [][]byte            `json:"certificate,omitempty"`
-	Scheme       string              `json:"scheme"`
-	Error        any                 `json:"error,omitempty"`
+	ConnectionCode byte                `json:"connection-code"`
+	Topics         map[string][]string `json:"topics,omitempty"`
+	Certificates   [][]byte            `json:"certificate,omitempty"`
+	Scheme         string              `json:"scheme"`
+	Error          any                 `json:"error,omitempty"`
+
+	// TODO: divide this by scheme. Each result should be enclosed in the given scheme.
+	// E.g.: tls {connection-code: 0, topics: {}}, ssl {connection-code: 1, topics: {$SYS/broker/version: mosquitto}}...
 }
 
 // Scanner implements the zgrab2.Scanner interface.

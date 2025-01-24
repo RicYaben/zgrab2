@@ -181,10 +181,15 @@ func (s *scan) Grab() *zgrab2.ScanError {
 	}
 
 	client := paho.NewClient(options)
-	if t := client.Connect(); t.Wait() && t.Error() != nil {
+	t := client.Connect()
+	if t.Wait() && t.Error() != nil {
 		return zgrab2.NewScanError(zgrab2.SCAN_CONNECTION_REFUSED, t.Error())
 	}
 	defer client.Disconnect(250)
+
+	if t := t.(*paho.ConnectToken); t != nil {
+		s.result.ConnectionCode = t.ReturnCode()
+	}
 
 	s.SetFilters()
 	handler := s.makeMessageHandler()

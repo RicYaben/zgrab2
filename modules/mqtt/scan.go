@@ -164,6 +164,19 @@ func (s *scan) wait(client paho.Client) {
 	client.Unsubscribe(s.topics...)
 }
 
+func (s *scan) safeConnect(client paho.Client) error {
+	defer func() {
+		if r := recover(); r != nil {
+			s.result.Error = r
+		}
+	}()
+
+	if t := client.Connect(); t.WaitTimeout(s.scanner.config.Timeout) && t.Error() != nil {
+		return t.Error()
+	}
+	return nil
+}
+
 func (s *scan) Grab() *zgrab2.ScanError {
 	defer func() {
 		// Stop panic
@@ -181,19 +194,16 @@ func (s *scan) Grab() *zgrab2.ScanError {
 	}
 
 	client := paho.NewClient(options)
-	t := client.Connect()
-	if t.Wait() && t.Error() != nil {
-		return zgrab2.NewScanError(zgrab2.SCAN_CONNECTION_REFUSED, t.Error())
+	if err := s.safeConnect(client); err != nil {
+		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
 	}
 	defer client.Disconnect(250)
 
-	if t := t.(*paho.ConnectToken); t != nil {
-		s.result.ConnectionCode = t.ReturnCode()
-	}
-
 	s.SetFilters()
 	handler := s.makeMessageHandler()
-	client.SubscribeMultiple(s.filters, handler)
+	if t := client.SubscribeMultiple(s.filters, handler); t.WaitTimeout(s.scanner.config.Timeout) && t.Error() != nil {
+		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+	}
 
 	s.wait(client)
 	return nil

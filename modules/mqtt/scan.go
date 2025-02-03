@@ -164,16 +164,6 @@ func (s *scan) wait(client paho.Client) {
 	client.Unsubscribe(s.topics...)
 }
 
-func (s *scan) safeConnect(client paho.Client) error {
-	defer func() {
-		if r := recover(); r != nil {
-			s.result.Error = r
-		}
-	}()
-
-	return nil
-}
-
 func (s *scan) Grab() *zgrab2.ScanError {
 	options, err := s.getClientOptions()
 	if err != nil {

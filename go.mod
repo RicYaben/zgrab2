@@ -49,3 +49,5 @@ require (
 	github.com/weppos/publicsuffix-go v0.40.2 // indirect
 	github.com/zmap/rc2 v0.0.0-20190804163417-abaa70531248 // indirect
 )
+
+replace github.com/eclipse/paho.mqtt.golang v1.5.0 => github.com/RicYaben/paho.mqtt.golang v0.0.1

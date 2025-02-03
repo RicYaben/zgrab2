@@ -165,6 +165,18 @@ func (s *scan) wait(client paho.Client) {
 }
 
 func (s *scan) Grab() *zgrab2.ScanError {
+	defer func() {
+		// Stop panic
+		// The paho client tends to panic on:
+		// github.com/eclipse/paho%2emqtt%2egolang.startIncomingComms.func1()
+		// ...github.com/eclipse/paho.mqtt.golang@v1.5.0/net.go:212 +0x101d
+		// This is caused by the server returning more returnCodes than the number
+		// of responses for the subscribed topics.
+		if r := recover(); r != nil {
+			s.result.Error = r
+		}
+	}()
+
 	options, err := s.getClientOptions()
 	if err != nil {
 		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
@@ -176,25 +188,11 @@ func (s *scan) Grab() *zgrab2.ScanError {
 	}
 	defer client.Disconnect(250)
 
-	go func() {
-		defer func() {
-			// Stop panic
-			// The paho client tends to panic on:
-			// github.com/eclipse/paho%2emqtt%2egolang.startIncomingComms.func1()
-			// ...github.com/eclipse/paho.mqtt.golang@v1.5.0/net.go:212 +0x101d
-			// This is caused by the server returning more returnCodes than the number
-			// of responses for the subscribed topics.
-			if r := recover(); r != nil {
-				s.result.Error = r
-			}
-		}()
-
-		s.SetFilters()
-		handler := s.makeMessageHandler()
-		if t := client.SubscribeMultiple(s.filters, handler); t.WaitTimeout(s.scanner.config.Timeout) && t.Error() != nil {
-			s.result.Error = t.Error()
-		}
-	}()
+	s.SetFilters()
+	handler := s.makeMessageHandler()
+	if t := client.SubscribeMultiple(s.filters, handler); t.WaitTimeout(s.scanner.config.Timeout) && t.Error() != nil {
+		s.result.Error = t.Error()
+	}
 
 	s.wait(client)
 	return nil

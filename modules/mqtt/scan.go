@@ -86,7 +86,7 @@ func (s *scan) getClientOptions() (*paho.ClientOptions, error) {
 	opts := paho.NewClientOptions().
 		SetClientID(id).
 		SetCleanSession(true).
-		SetAutoReconnect(true)
+		SetAutoReconnect(false)
 
 	switch s.scheme {
 	case "ssl":
@@ -141,9 +141,7 @@ func (s *scan) makeMessageHandler() func(c paho.Client, m paho.Message) {
 		topic := m.Topic()
 		if isFull(topic) {
 			// unsubscribe and ignore the message
-			// TODO FIXME: unsubscribing from the topic will cause a panic if we
-			// receive another message for this topic.
-			//c.Unsubscribe(topic)
+			c.Unsubscribe(topic)
 			return
 		}
 
@@ -173,39 +171,40 @@ func (s *scan) safeConnect(client paho.Client) error {
 		}
 	}()
 
-	if t := client.Connect(); t.WaitTimeout(s.scanner.config.Timeout) && t.Error() != nil {
-		return t.Error()
-	}
 	return nil
 }
 
 func (s *scan) Grab() *zgrab2.ScanError {
-	defer func() {
-		// Stop panic
-		// The paho client tends to panic on:
-		// github.com/eclipse/paho%2emqtt%2egolang.startIncomingComms.func1()
-		// ...github.com/eclipse/paho.mqtt.golang@v1.5.0/net.go:212 +0x101d
-		if r := recover(); r != nil {
-			s.result.Error = r
-		}
-	}()
-
 	options, err := s.getClientOptions()
 	if err != nil {
 		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
 	}
 
 	client := paho.NewClient(options)
-	if err := s.safeConnect(client); err != nil {
-		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+	if t := client.Connect(); t.WaitTimeout(s.scanner.config.Timeout) && t.Error() != nil {
+		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, t.Error())
 	}
 	defer client.Disconnect(250)
 
-	s.SetFilters()
-	handler := s.makeMessageHandler()
-	if t := client.SubscribeMultiple(s.filters, handler); t.WaitTimeout(s.scanner.config.Timeout) && t.Error() != nil {
-		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
-	}
+	go func() {
+		defer func() {
+			// Stop panic
+			// The paho client tends to panic on:
+			// github.com/eclipse/paho%2emqtt%2egolang.startIncomingComms.func1()
+			// ...github.com/eclipse/paho.mqtt.golang@v1.5.0/net.go:212 +0x101d
+			// This is caused by the server returning more returnCodes than the number
+			// of responses for the subscribed topics.
+			if r := recover(); r != nil {
+				s.result.Error = r
+			}
+		}()
+
+		s.SetFilters()
+		handler := s.makeMessageHandler()
+		if t := client.SubscribeMultiple(s.filters, handler); t.WaitTimeout(s.scanner.config.Timeout) && t.Error() != nil {
+			s.result.Error = t.Error()
+		}
+	}()
 
 	s.wait(client)
 	return nil

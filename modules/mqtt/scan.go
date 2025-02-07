@@ -166,7 +166,6 @@ func (s *scan) wait(client paho.Client) {
 
 func (s *scan) Grab() *zgrab2.ScanError {
 	defer func() {
-		// Stop panic
 		// The paho client tends to panic on:
 		// github.com/eclipse/paho%2emqtt%2egolang.startIncomingComms.func1()
 		// ...github.com/eclipse/paho.mqtt.golang@v1.5.0/net.go:212 +0x101d
@@ -183,14 +182,14 @@ func (s *scan) Grab() *zgrab2.ScanError {
 	}
 
 	client := paho.NewClient(options)
-	if t := client.Connect(); t.WaitTimeout(s.scanner.config.Timeout) && t.Error() != nil {
+	if t := client.Connect(); t.Wait() && t.Error() != nil {
 		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, t.Error())
 	}
 	defer client.Disconnect(250)
 
 	s.SetFilters()
 	handler := s.makeMessageHandler()
-	if t := client.SubscribeMultiple(s.filters, handler); t.WaitTimeout(s.scanner.config.Timeout) && t.Error() != nil {
+	if t := client.SubscribeMultiple(s.filters, handler); t.Wait() && t.Error() != nil {
 		s.result.Error = t.Error()
 	}
 

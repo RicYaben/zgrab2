@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"math/big"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/gopcua/opcua"
@@ -66,7 +65,11 @@ func (scanner *Scanner) GetTrigger() string {
 func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	f, _ := flags.(*Flags)
 	scanner.config = f
-	scanner.endpoint = f.Endpoint
+
+	scanner.endpoint = "UADiscovery"
+	if f.Endpoint != "" {
+		scanner.endpoint = f.Endpoint
+	}
 
 	certPEM, keyPEM, err := generateSelfSignedCert(f.CertHost)
 	if err != nil {
@@ -132,32 +135,57 @@ type scan struct {
 	browser   *browser
 }
 
-func (s *scan) setEndpoints(eps []*ua.EndpointDescription) {
-	for _, ep := range eps {
-		r := newEndpoint(ep)
-		s.results.Endpoints = append(s.results.Endpoints, r)
+func (s *scan) setServerApplications(appsDesc []*ua.ApplicationDescription) {
+	for _, appDesc := range appsDesc {
+		app := newApplication(appDesc)
+		s.results.Applications = append(s.results.Applications, app)
 	}
+}
+
+func (s *scan) scanServerApplication(app *ApplicationResult) *zgrab2.ScanError {
+	desc := app.ApplicationDescription
+
+	// TODO: select one of them? we dont need to scan all the
+	// URLs if they are the same
+	for _, url := range desc.DiscoveryURLs {
+		appurl := newApplicationURL(url)
+		app.ApplicationURLS = append(app.ApplicationURLS, appurl)
+
+		// Get endpoints
+		eps, err := opcua.GetEndpoints(s.ctx, url)
+		if err != nil {
+			return zgrab2.DetectScanError(err)
+		}
+		appurl.setEndpoints(eps)
+
+		resEps := appurl.Endpoints
+		if limit := int(s.scanner.config.EndpointLimit); len(resEps) > limit {
+			resEps = resEps[:limit]
+		}
+
+		// Authenticate to each endpoints
+		for _, r := range resEps {
+			if err := s.authAndBrowse(r); err != nil {
+				return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *scan) Grab() *zgrab2.ScanError {
 	defer s.cancel()
 
-	// Get endpoints
-	eps, err := opcua.GetEndpoints(s.ctx, s.endpoint)
+	// TODO FIXME: UADiscovery is the endpoint, set it to a field in the scan
+	appsDescs, err := opcua.FindServers(s.ctx, s.endpoint)
 	if err != nil {
 		return zgrab2.DetectScanError(err)
 	}
-	s.setEndpoints(eps)
+	s.setServerApplications(appsDescs)
 
-	resEps := s.results.Endpoints
-	if limit := int(s.scanner.config.EndpointLimit); len(resEps) > limit {
-		resEps = resEps[:limit]
-	}
-
-	// Authenticate to each endpoints
-	for _, r := range resEps {
-		if err := s.authAndBrowse(r); err != nil {
-			return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+	for _, app := range s.results.Applications {
+		if err := s.scanServerApplication(app); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -237,8 +265,6 @@ func (s *Scanner) newOPCUAscan(ep string) *scan {
 
 func (s *Scanner) Scan(t zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
 	ep := fmt.Sprintf("opc.tcp://%s:%d", t.Host(), *t.Port)
-	ep = strings.Join([]string{ep, s.endpoint}, "/")
-
 	scan := s.newOPCUAscan(ep)
 	if err := scan.Grab(); err != nil {
 		return err.Unpack(&scan.results)

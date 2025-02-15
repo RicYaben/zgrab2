@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"testing"
+	"time"
 
 	"github.com/zmap/zgrab2"
 )
@@ -22,6 +23,7 @@ func (cfg *opcuaTester) getScanner() (*Scanner, error) {
 	flags.CertHost = cfg.certHost
 	flags.Endpoint = cfg.endpoint
 	flags.BrowseDepth = cfg.level
+	flags.Timeout = 30 * time.Second
 
 	scanner := module.NewScanner()
 	if err := scanner.Init(flags); err != nil {
@@ -54,7 +56,7 @@ var tests = map[string]*opcuaTester{
 		port:     51210,
 		uri:      "urn:opcua:scanner",
 		certHost: "localhost",
-		endpoint: "UA/SampleServer",
+		endpoint: "UADiscovery", //UA/SampleServer
 		level:    2,
 	},
 }

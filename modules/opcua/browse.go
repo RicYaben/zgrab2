@@ -107,6 +107,37 @@ func (n *NodeDef) SetDataType(dt *ua.DataValue) error {
 	}
 }
 
+type ApplicationResult struct {
+	ApplicationDescription *ua.ApplicationDescription
+	ApplicationURLS        []*ApplicationURL
+}
+
+type ApplicationURL struct {
+	URL       string
+	Endpoints []*EndpointResult `json:"endpoints,omitempty"`
+}
+
+func newApplicationURL(url string) *ApplicationURL {
+	return &ApplicationURL{
+		URL:       url,
+		Endpoints: []*EndpointResult{},
+	}
+}
+
+func (app *ApplicationURL) setEndpoints(eps []*ua.EndpointDescription) {
+	for _, ep := range eps {
+		r := newEndpoint(ep)
+		app.Endpoints = append(app.Endpoints, r)
+	}
+}
+
+func newApplication(app *ua.ApplicationDescription) *ApplicationResult {
+	return &ApplicationResult{
+		ApplicationURLS:        []*ApplicationURL{},
+		ApplicationDescription: app,
+	}
+}
+
 type EndpointResult struct {
 	Error               *zgrab2.ScanError `json:"error,omitempty"`
 	EndpointDescription *ua.EndpointDescription
@@ -124,7 +155,7 @@ func newEndpoint(ep *ua.EndpointDescription) *EndpointResult {
 }
 
 type Results struct {
-	Endpoints []*EndpointResult `json:"endpoints,omitempty"`
+	Applications []*ApplicationResult `json:"applications"`
 }
 
 type browser struct {

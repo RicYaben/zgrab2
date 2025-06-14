@@ -1,0 +1,113 @@
+package upnp
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"testing"
+	"time"
+
+	"github.com/zmap/zgrab2"
+)
+
+type upnpTester struct {
+	target         zgrab2.ScanTarget
+	expectedStatus zgrab2.ScanStatus
+}
+
+func (cfg *upnpTester) runFakeUPnPServer(t *testing.T) {
+	endpoint := fmt.Sprintf("127.0.0.1:%d", cfg.target.Port)
+	listener, err := net.ListenPacket("udp", endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		defer listener.Close()
+
+		// just read something?
+		buf := make([]byte, 1024)
+		_, addr, err := listener.ReadFrom(buf)
+		if err != nil {
+			t.Logf("Unexpected error while reading %v", err)
+		}
+
+		header := "HTTP/1.1 200 OK\r\n"
+		headerSuffix := "CACHE-CONTROL: max-age=1800\r\nEXT: \r\nST: upnp:rootdevice\r\nLOCATION: http://192.168.0.1:80/config.xml\r\nUSN: uuid:abc\r\n\r\n"
+		msg := fmt.Sprintf("%s%s", header, headerSuffix)
+
+		if _, err := listener.WriteTo([]byte(msg), addr); err != nil {
+			t.Logf("Failed writing to client: %v", err)
+			return
+		}
+	}()
+}
+
+func (cfg *upnpTester) getScanner() (*Scanner, error) {
+	var module Module
+	flags := module.NewFlags().(*Flags)
+	flags.Method = "M-SEARCH"
+	flags.Man = "ssdp:discover"
+	flags.St = "upnp:rootdevice"
+	flags.UserAgent = "Mozilla/5.0"
+
+	scanner := module.NewScanner()
+	if err := scanner.Init(flags); err != nil {
+		return nil, err
+	}
+
+	return scanner.(*Scanner), nil
+}
+
+func (cfg *upnpTester) runTest(t *testing.T, testName string) {
+	scanner, err := cfg.getScanner()
+	if err != nil {
+		t.Fatalf("[%s] Unexpected error: %v", testName, err)
+	}
+	cfg.runFakeUPnPServer(t)
+
+	baseFlags := &zgrab2.BaseFlags{
+		Port:           cfg.target.Port,
+		ConnectTimeout: time.Second * 10,
+		TargetTimeout:  time.Second * 10,
+	}
+
+	dialerGroupConfig := zgrab2.DialerGroupConfig{
+		TransportAgnosticDialerProtocol: zgrab2.TransportUDP,
+		BaseFlags:                       baseFlags,
+		TLSEnabled:                      false,
+	}
+
+	dialerGroup, err := dialerGroupConfig.GetDefaultDialerGroupFromConfig()
+	if err != nil {
+		t.Fatalf("Error getting default dialer group: %v", err)
+	}
+
+	status, ret, err := scanner.Scan(context.Background(), dialerGroup, &cfg.target)
+	if status != cfg.expectedStatus {
+		t.Errorf("[%s] Wrong status: expected %s, got %s", testName, cfg.expectedStatus, status)
+	}
+	if err != nil {
+		t.Errorf("[%s] Unexpected error: %v", testName, err)
+	}
+
+	if ret == nil {
+		t.Errorf("[%s] Got empty response", testName)
+	}
+}
+
+var tests = map[string]*upnpTester{
+	"success": {
+		target: zgrab2.ScanTarget{
+			Domain: "coap.me",
+			Port:   1900,
+		},
+		expectedStatus: zgrab2.SCAN_SUCCESS,
+	},
+}
+
+func TestUPnP(t *testing.T) {
+	for tname, cfg := range tests {
+		cfg.runTest(t, tname)
+	}
+}

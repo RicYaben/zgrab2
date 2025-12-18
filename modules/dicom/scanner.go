@@ -38,6 +38,11 @@ func (module *Module) NewScanner() zgrab2.Scanner {
 	return new(Scanner)
 }
 
+// GetScanMetadata returns any metadata on the scan itself from this module.
+func (scanner *Scanner) GetScanMetadata() any {
+	return nil
+}
+
 // Description returns an overview of this module.
 func (module *Module) Description() string {
 	return `This module sends a DICOM A-ASSOCIATION-RQ and a C-ECHO-RQ.`

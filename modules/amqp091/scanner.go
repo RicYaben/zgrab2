@@ -97,7 +97,7 @@ type Result struct {
 // RegisterModule registers the zgrab2 module.
 func RegisterModule() {
 	var module Module
-	_, err := zgrab2.AddCommand("amqp091", "amqp091", module.Description(), 5672, &module)
+	_, err := zgrab2.AddCommand("amqp091", "Advanced Message Queue Protocol v0.9.1 (AMQP)", module.Description(), 5672, &module)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -175,6 +175,11 @@ func (scanner *Scanner) Protocol() string {
 
 func (scanner *Scanner) GetDialerGroupConfig() *zgrab2.DialerGroupConfig {
 	return scanner.dialerGroupConfig
+}
+
+// GetScanMetadata returns any metadata on the scan itself from this module.
+func (scanner *Scanner) GetScanMetadata() any {
+	return nil
 }
 
 func (scanner *Scanner) Scan(ctx context.Context, dialGroup *zgrab2.DialerGroup, target *zgrab2.ScanTarget) (zgrab2.ScanStatus, any, error) {

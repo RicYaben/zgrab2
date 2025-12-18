@@ -21,7 +21,6 @@ import (
 type Flags struct {
 	zgrab2.BaseFlags `group:"Basic Options"`
 	zgrab2.TLSFlags  `group:"TLS Options"`
-	Verbose          bool `long:"verbose" description:"More verbose logging, include debug fields in the scan results"`
 	UseTLS           bool `long:"use-tls" description:"Sends probe with a TLS connection. Loads TLS module command options."`
 }
 
@@ -38,7 +37,7 @@ type Scanner struct {
 // RegisterModule registers the zgrab2 module.
 func RegisterModule() {
 	var module Module
-	_, err := zgrab2.AddCommand("fox", "fox", module.Description(), 1911, &module)
+	_, err := zgrab2.AddCommand("fox", "Niagara Fox IoT and Building Automation Communication Protocol (Fox)", module.Description(), 1911, &module)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -106,6 +105,11 @@ func (scanner *Scanner) Protocol() string {
 
 func (scanner *Scanner) GetDialerGroupConfig() *zgrab2.DialerGroupConfig {
 	return scanner.dialerGroupConfig
+}
+
+// GetScanMetadata returns any metadata on the scan itself from this module.
+func (scanner *Scanner) GetScanMetadata() any {
+	return nil
 }
 
 // Scan probes for a Tridium Fox service.

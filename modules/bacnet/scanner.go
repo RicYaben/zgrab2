@@ -20,8 +20,6 @@ import (
 // Populated by the framework.
 type Flags struct {
 	zgrab2.BaseFlags `group:"Basic Options"`
-
-	Verbose bool `long:"verbose" description:"More verbose logging, include debug fields in the scan results"`
 }
 
 // Module implements the zgrab2.Module interface.
@@ -37,7 +35,7 @@ type Scanner struct {
 // RegisterModule registers the zgrab2 module.
 func RegisterModule() {
 	var module Module
-	_, err := zgrab2.AddCommand("bacnet", "bacnet", module.Description(), 0xBAC0, &module)
+	_, err := zgrab2.AddCommand("bacnet", "Building Automation and Control Network (BACNET)", module.Description(), 0xBAC0, &module)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -68,6 +66,11 @@ func (flags *Flags) Validate(_ []string) error {
 // Help returns the module's help string.
 func (flags *Flags) Help() string {
 	return ""
+}
+
+// GetScanMetadata returns any metadata on the scan itself from this module.
+func (scanner *Scanner) GetScanMetadata() any {
+	return nil
 }
 
 // Init initializes the Scanner.

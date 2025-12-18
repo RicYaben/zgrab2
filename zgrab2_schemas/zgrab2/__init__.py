@@ -4,6 +4,8 @@ from . import dnp3
 from . import fox
 from . import ftp
 from . import http
+from . import managesieve
+from . import memcached
 from . import modbus
 from . import mongodb
 from . import mssql

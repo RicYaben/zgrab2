@@ -82,6 +82,10 @@ func (module *Module) NewScanner() zgrab2.Scanner {
 	return new(Scanner)
 }
 
+func (scanner *Scanner) GetScanMetadata() any {
+	return nil
+}
+
 // Help returns the module's help string.
 func (flags *Flags) Help() string {
 	return ""

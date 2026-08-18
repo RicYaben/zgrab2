@@ -54,11 +54,15 @@ func (module *Module) NewScanner() zgrab2.Scanner {
 	return new(Scanner)
 }
 
+func (scanner *Scanner) GetScanMetadata() any {
+	return nil
+}
+
 // Description returns text uses in the help for this module.
 func (module *Module) Description() string {
 	return `
 	Probe for UPnP servers.
-	
+
 	The probe consists on sending a unicast HTTP over UDP datagram to a target address.
 	The datagram is structured as an SSDP discover request with the M-SEARCH header to order a "MUST" respond.
 	`

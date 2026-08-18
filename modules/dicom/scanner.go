@@ -2,6 +2,8 @@ package dicom
 
 import (
 	"context"
+	"errors"
+	"strings"
 
 	log "github.com/sirupsen/logrus"
 
@@ -9,11 +11,21 @@ import (
 )
 
 type Flags struct {
-	zgrab2.BaseFlags
-	zgrab2.TLSFlags
+	zgrab2.BaseFlags `group:"Basic Options"`
+	zgrab2.TLSFlags  `group:"TLS Options"`
 
 	CallingAETitle string `long:"calling-ae-title" description:"Source DICOM Application Name. 16bytes max."`
-	CalledAETitle  string `long:"called-ae-title" description:"Destination DICOM Application Name. 16bytes max."`
+	CalledAETitles string `long:"called-ae-titles" default:"ORTHANC" description:"Destination DICOM Application Names. 16bytes max each"`
+
+	ImplementationClassUID    string `long:"class-uid" default:"1.2.3.4.5" description:"Software in use UID"`
+	ImplementationVersionName string `long:"version-name" default:"ZGRAB2" description:"Software version name"`
+
+	Requests string `long:"requests" default:"associate,echo,find" description:"Comma-separated list of DIMSE-C requests to send"`
+
+	CFindModel         string `long:"cfind-model" default:"STUDY" description:"Model for C-FIND requests"`
+	CFindKeys          string `long:"cfind-keys" default:"QueryRetrieveLevel=STUDY,PatientID" description:"Keys for C-FIND requests"`
+	CFindKeysDelimiter string `long:"cfind-delimiter" default:"," description:"Delimiter for C-FIND keys"`
+	CFindNCancel       int    `long:"cfind-ncancel" default:"0" description:"Number of C-FIND responses to receive before cancelling"`
 
 	RetryTLS bool `long:"retry-tls" description:"retry the connection now over TLS"`
 	UseTLS   bool `long:"use-tls" description:"force TLS handshake"`
@@ -40,7 +52,7 @@ func (module *Module) NewScanner() zgrab2.Scanner {
 
 // Description returns an overview of this module.
 func (module *Module) Description() string {
-	return `This module sends a DICOM A-ASSOCIATION-RQ and a C-ECHO-RQ.`
+	return `This module sends a DICOM A-ASSOCIATION-RQ and other DIMSE-C requests.`
 }
 
 type Result struct {
@@ -52,6 +64,11 @@ type Scanner struct {
 	config            *Flags
 	builder           *ScanBuilder
 	dialerGroupConfig *zgrab2.DialerGroupConfig
+	requests          [][]PreparedRequest
+}
+
+func (scanner *Scanner) GetScanMetadata() any {
+	return nil
 }
 
 func (scanner *Scanner) GetDialerGroupConfig() *zgrab2.DialerGroupConfig {
@@ -60,7 +77,7 @@ func (scanner *Scanner) GetDialerGroupConfig() *zgrab2.DialerGroupConfig {
 
 // Protocol returns the protocol identifer for the scanner.
 func (scanner *Scanner) Protocol() string {
-	return "DICOM"
+	return "dicom"
 }
 
 // Init initializes the Scanner.
@@ -68,6 +85,38 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	fl, _ := flags.(*Flags)
 	scanner.config = fl
 	scanner.builder = NewScanBuilder(scanner)
+
+	titles := strings.Split(fl.CalledAETitles, ",")
+	scanner.requests = make([][]PreparedRequest, len(titles))
+
+	args := map[string]any{
+		"associate": AssociateArgs{
+			CallingAETitle: fl.CallingAETitle,
+		},
+		"echo": nil,
+		"find": CFindArgs{
+			Model:   fl.CFindModel,
+			Keys:    strings.Split(fl.CFindKeys, fl.CFindKeysDelimiter),
+			NCancel: fl.CFindNCancel,
+		},
+	}
+
+	rqs := strings.Split(fl.Requests, ",")
+	for i, title := range titles {
+		nargs := args["associate"].(AssociateArgs)
+		nargs.CalledAETitle = title
+		args["associate"] = nargs
+
+		d := dimse{}
+		pr := make([]PreparedRequest, 0, 3)
+		for _, rq := range rqs {
+			if rqArgs, ok := args[rq]; ok {
+				r := d.makeRequest(rq, rqArgs)
+				pr = append(pr, r)
+			}
+		}
+		scanner.requests[i] = pr
+	}
 
 	scanner.dialerGroupConfig = &zgrab2.DialerGroupConfig{
 		TransportAgnosticDialerProtocol: zgrab2.TransportTCP,
@@ -95,14 +144,24 @@ func (scanner *Scanner) GetTrigger() string {
 }
 
 // NewFlags returns an empty Flags object.
-func (module *Module) NewFlags() interface{} {
+func (module *Module) NewFlags() any {
 	return new(Flags)
 }
 
+var (
+	ErrAssociationReject = errors.New("association rejected")
+)
+
 func (s *Scanner) scan(ctx context.Context, dialGroup *zgrab2.DialerGroup, t *zgrab2.ScanTarget, scheme string) (zgrab2.ScanStatus, interface{}, error) {
 	scan := s.builder.Build(ctx, dialGroup, t, scheme)
-	if err := scan.Grab(); err != nil {
-		return err.Unpack(scan.result)
+	for _, rqs := range s.requests {
+		if err := scan.Grab(rqs); err != nil {
+			if errors.Is(err.Err, ErrAssociationReject) {
+				continue
+			}
+			return err.Unpack(scan.result)
+		}
+		break
 	}
 	return zgrab2.SCAN_SUCCESS, scan.result, nil
 }
@@ -138,7 +197,7 @@ func (s *Scanner) Scan(ctx context.Context, dialGroup *zgrab2.DialerGroup, t *zg
 // zgrab2 framework.
 func RegisterModule() {
 	var module Module
-	_, err := zgrab2.AddCommand("dicom-echo", "DICOM Banner Grab", module.Description(), 104, &module)
+	_, err := zgrab2.AddCommand("dicom", "DICOM Banner Grab", module.Description(), 104, &module)
 	if err != nil {
 		log.Fatal(err)
 	}

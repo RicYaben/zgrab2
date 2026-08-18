@@ -55,7 +55,7 @@ func (module *Module) NewScanner() zgrab2.Scanner {
 func (module *Module) Description() string {
 	return `
 	Porbe for RTSP media servers.
-	
+
 	The probe consists on sending an HTTP DESCRIBE request over TCP to a target.
 	`
 }
@@ -189,6 +189,10 @@ func (scan *scan) Options() *Request {
 type Scanner struct {
 	dialerGroupConfig *zgrab2.DialerGroupConfig
 	config            *Flags
+}
+
+func (scanner *Scanner) GetScanMetadata() any {
+	return nil
 }
 
 func (scanner *Scanner) GetDialerGroupConfig() *zgrab2.DialerGroupConfig {

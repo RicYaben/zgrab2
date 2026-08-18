@@ -81,6 +81,10 @@ type Scanner struct {
 	paths             []string
 }
 
+func (scanner *Scanner) GetScanMetadata() any {
+	return nil
+}
+
 // Protocol returns the protocol identifer for the scanner.
 func (scanner *Scanner) Protocol() string {
 	return "coap"

@@ -3,6 +3,7 @@ package dicom
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -16,8 +17,12 @@ type PDUType uint8
 const (
 	ASSOC_RQ     PDUType = 1
 	ASSOC_ACCEPT PDUType = 2
+	ASSOC_REJECT PDUType = 3
 	DATA         PDUType = 4
 )
+
+// 64KiB -- correct 16384
+const MaxPDULength = 16384
 
 type PDUMsg interface {
 	bytes() []byte
@@ -41,11 +46,24 @@ func newPDVCommand(group, tag uint16, value []byte) *PDVCommand {
 
 func (cmd *PDVCommand) bytes() []byte {
 	buf := make([]byte, 0, cmd.Length+8)
-	buf = binary.LittleEndian.AppendUint16(buf, cmd.GroupTag)
-	buf = binary.LittleEndian.AppendUint16(buf, cmd.ElementTag)
-	buf = binary.LittleEndian.AppendUint32(buf, cmd.Length)
-	buf = append(buf, cmd.Value...)
-	return buf
+	w := bytes.NewBuffer(buf)
+	if err := binary.Write(w, binary.LittleEndian, cmd.GroupTag); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, cmd.ElementTag); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, cmd.Length); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if _, err := w.Write(cmd.Value); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	return w.Bytes()
 }
 
 type PDV struct {
@@ -58,14 +76,39 @@ type PDV struct {
 
 func (p *PDV) bytes() []byte {
 	buf := make([]byte, 0, p.Legnth)
-	buf = binary.BigEndian.AppendUint32(buf, p.Legnth)
-	buf = append(buf, p.Context, p.Flags)
-
-	for _, cmd := range p.Commands {
-		buf = append(buf, cmd.bytes()...)
+	w := bytes.NewBuffer(buf)
+	if err := binary.Write(w, binary.BigEndian, p.Legnth); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
 	}
 
-	return buf
+	if _, err := w.Write([]byte{p.Context, p.Flags}); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	for _, cmd := range p.Commands {
+		w.Write(cmd.bytes())
+	}
+
+	return w.Bytes()
+}
+
+func (p *PDV) addLengthCommand() *PDV {
+	var w bytes.Buffer
+	for _, cmd := range p.Commands {
+		w.Write(cmd.bytes())
+	}
+
+	b := make([]byte, 4)
+	binary.LittleEndian.PutUint32(b, uint32(w.Len()))
+	head := newPDVCommand(0, 0, b)
+	p.Commands = append([]*PDVCommand{head}, p.Commands...)
+
+	if _, err := w.Write(head.bytes()); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	p.Legnth = uint32(w.Len() + 2)
+	return p
 }
 
 type PDUHeader struct {
@@ -74,10 +117,17 @@ type PDUHeader struct {
 }
 
 func (h *PDUHeader) bytes() []byte {
-	header := make([]byte, 0)
-	header = append(header, uint8(h.PDUType), 0x00)
-	header = binary.BigEndian.AppendUint32(header, h.Length)
-	return header
+	buf := make([]byte, 0)
+	w := bytes.NewBuffer(buf)
+
+	if _, err := w.Write([]byte{uint8(h.PDUType), 0x00}); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if err := binary.Write(w, binary.BigEndian, h.Length); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+	return w.Bytes()
 }
 
 type PDU struct {
@@ -171,10 +221,41 @@ func (pdu *PDU) parseAssociationMsg(data []byte) (*AAssociate, error) {
 }
 
 func (pdu *PDU) parseDataMsg(data []byte) (*PDV, error) {
-	l := binary.BigEndian.Uint32(data[:4])
-	ctx := data[4]
-	flags := data[5]
-	cmds := data[6 : 6+l-2]
+	if len(data) < 6 {
+		return nil, errors.New("data too short to contain valid PDU header")
+	}
+
+	buf := bytes.NewReader(data)
+
+	var length uint32
+	if err := binary.Read(buf, binary.BigEndian, &length); err != nil {
+		return nil, fmt.Errorf("failed to read PDU length: %w", err)
+	}
+
+	// Length must be at least 2 for ctx + flags
+	if length < 2 {
+		return nil, fmt.Errorf("invalid PDU length: %d", length)
+	}
+
+	ctx, err := buf.ReadByte()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read context ID: %w", err)
+	}
+
+	flags, err := buf.ReadByte()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read flags: %w", err)
+	}
+
+	cmdLen := int(length - 2)
+	if buf.Len() < cmdLen {
+		return nil, fmt.Errorf("not enough data to read PDU commands: want %d, have %d", cmdLen, buf.Len())
+	}
+
+	cmds := make([]byte, cmdLen)
+	if _, err := io.ReadFull(buf, cmds); err != nil {
+		return nil, fmt.Errorf("failed to read PDU commands: %w", err)
+	}
 
 	pdv := &PDV{
 		Legnth:   uint32(len(cmds) + 2), // cms + ctx & flags
@@ -183,19 +264,31 @@ func (pdu *PDU) parseDataMsg(data []byte) (*PDV, error) {
 		Commands: []*PDVCommand{},
 	}
 
-	i := 0
-	for i+8 <= len(cmds) {
-		tagGroup := binary.LittleEndian.Uint16(cmds[i : i+2])
-		tagElem := binary.LittleEndian.Uint16(cmds[i+2 : i+4])
-		length := binary.LittleEndian.Uint32(cmds[i+4 : i+8])
+	r := bytes.NewReader(cmds)
+	for r.Len() >= 8 {
+		var tagGroup, tagElem uint16
+		var length uint32
 
-		if i+8+int(length) > len(cmds) {
-			return nil, fmt.Errorf("element length exceeds buffer at offset %d", i)
+		if err := binary.Read(r, binary.LittleEndian, &tagGroup); err != nil {
+			return nil, fmt.Errorf("failed to read tag group: %w", err)
 		}
-		value := cmds[i+8 : i+8+int(length)]
+		if err := binary.Read(r, binary.LittleEndian, &tagElem); err != nil {
+			return nil, fmt.Errorf("failed to read tag element: %w", err)
+		}
+		if err := binary.Read(r, binary.LittleEndian, &length); err != nil {
+			return nil, fmt.Errorf("failed to read element length: %w", err)
+		}
+
+		if uint32(r.Len()) < length {
+			return nil, fmt.Errorf("element length (%d) exceeds remaining buffer (%d)", length, r.Len())
+		}
+
+		value := make([]byte, length)
+		if _, err := io.ReadFull(r, value); err != nil {
+			return nil, fmt.Errorf("failed to read element value: %w", err)
+		}
 
 		pdv.Commands = append(pdv.Commands, newPDVCommand(tagGroup, tagElem, value))
-		i += 8 + int(length)
 	}
 
 	return pdv, nil
@@ -230,21 +323,25 @@ func parsePDU(data io.Reader) (*PDU, error) {
 	pdu := &PDU{}
 
 	if err := pdu.readHeader(data); err != nil {
-		return nil, fmt.Errorf("failed to parse PDU header: %v", err)
+		return nil, fmt.Errorf("failed to parse PDU header: %w", err)
+	}
+
+	if pdu.Header.Length > MaxPDULength {
+		return nil, fmt.Errorf("PDU too large: expected < %d, got %d", MaxPDULength, pdu.Header.Length)
 	}
 
 	if err := pdu.readMessage(data); err != nil {
-		return nil, fmt.Errorf("failed to parse PDU content: %v", err)
+		return nil, fmt.Errorf("failed to parse PDU content: %w", err)
 	}
 
 	return pdu, nil
 }
 
-func (pdu PDU) bytes() []byte {
-	b := make([]byte, 0)
-	b = append(b, pdu.Header.bytes()...)
-	b = append(b, pdu.Msg.bytes()...)
-	return b
+func (pdu *PDU) bytes() []byte {
+	w := new(bytes.Buffer)
+	w.Write(pdu.Header.bytes())
+	w.Write(pdu.Msg.bytes())
+	return w.Bytes()
 }
 
 type TransferSyntax struct {
@@ -269,20 +366,34 @@ func newPresentationContext(id, result uint8) *PresentationContext {
 }
 
 func (p *PresentationContext) bytes() []byte {
-	tssBuf := make([]byte, 0)
+	var tsW bytes.Buffer
 	for _, ts := range p.Items {
-		tssBuf = append(tssBuf, ts.bytes()...)
+		tsW.Write(ts.bytes())
 	}
 
-	buf := make([]byte, 0, 4+len(tssBuf))
-	buf = append(buf, p.Type, 0x00)
-	buf = binary.BigEndian.AppendUint16(buf, uint16(len(tssBuf))+4)
-	buf = append(buf,
+	buf := make([]byte, 0, 4+tsW.Len())
+	w := bytes.NewBuffer(buf)
+
+	// NOTE: those panics should never occur, but lint rules
+	if _, err := w.Write([]byte{p.Type, 0x00}); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if err := binary.Write(w, binary.BigEndian, uint16(tsW.Len()+4)); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if _, err := w.Write([]byte{
 		p.ContextID, 0x00,
 		p.Result, 0x00,
-	)
-	buf = append(buf, tssBuf...)
-	return buf
+	}); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if _, err := w.Write(tsW.Bytes()); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+	return w.Bytes()
 }
 
 type Item struct {
@@ -324,10 +435,20 @@ func newItem(t uint8, value []byte) *Item {
 }
 
 func (i *Item) bytes() []byte {
-	buf := []byte{i.Type, 0x00}
-	buf = binary.BigEndian.AppendUint16(buf, i.Length)
-	buf = append(buf, i.Value...)
-	return buf
+	var buf bytes.Buffer
+	if _, err := buf.Write([]byte{i.Type, 0x00}); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if err := binary.Write(&buf, binary.BigEndian, i.Length); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if _, err := buf.Write(i.Value); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	return buf.Bytes()
 }
 
 type UserInfo struct {
@@ -342,16 +463,25 @@ func newUserInfo() *UserInfo {
 }
 
 func (u *UserInfo) bytes() []byte {
-	itBuf := make([]byte, 0)
+	var buf bytes.Buffer
 	for _, it := range u.Items {
-		itBuf = append(itBuf, it.bytes()...)
+		buf.Write(it.bytes())
 	}
 
-	buf := []byte{u.Type, 0x00}
-	buf = binary.BigEndian.AppendUint16(buf, uint16(len(itBuf)))
-	buf = append(buf, itBuf...)
+	var w bytes.Buffer
+	if _, err := w.Write([]byte{u.Type, 0x00}); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
 
-	return buf
+	if err := binary.Write(&w, binary.BigEndian, uint16(buf.Len())); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	return w.Bytes()
 }
 
 type AAssociate struct {
@@ -363,12 +493,17 @@ type AAssociate struct {
 	UserInfo            *UserInfo
 }
 
-func makeAAssociateRQ(msgID uint8, callingAETitle string, calledAETitle string) *AAssociate {
+func makeAAssociateRQ(msgID uint8, callingAETitle, calledAETitle, impUID, impVName string) *AAssociate {
 	uInfo := newUserInfo()
+
+	maxPDULength := make([]byte, 4)
+	binary.BigEndian.PutUint32(maxPDULength, MaxPDULength)
+
 	uInfo.Items = []*Item{
-		newItem(0x51, []byte{0x00, 0x00, 0x40, 0x00}),
-		newItem(0x52, []byte("1.2.276.0.7230010.3.0.3.6.6")),
-		newItem(0x55, []byte("ZGRAB2")),
+		newItem(0x51, maxPDULength),
+		// <root>.<project>.<component>.<major>.<minor>
+		newItem(0x52, []byte(impUID)),   // e.g., 1.2.276.0.7230010.3.0.3.6.6
+		newItem(0x55, []byte(impVName)), // e.g., OFFIS_DCMTK_366
 	}
 
 	return &AAssociate{
@@ -386,79 +521,212 @@ func (a *AAssociate) addTransferSyntax(iType uint8, value string) *AAssociate {
 	return a
 }
 
-// func (a *AAssociate) setApplicationCtx(app string) *AAssociate {
-// 	a.ApplicationContext = app
-// 	return a
-// }
-
-// func (a *AAssociate) setUserInfo(pduLen uint32, uid, version string) *AAssociate {
-// 	l := make([]byte, 4)
-// 	binary.BigEndian.PutUint32(l, pduLen)
-// 	a.UserInfo.Items = []*Item{
-// 		newItem(0x51, l),
-// 		newItem(0x52, []byte(uid)),
-// 		newItem(0x55, []byte(version)),
-// 	}
-// 	return a
-// }
-
 func (a *AAssociate) header() []byte {
 	buf := make([]byte, 0, 68)
-	buf = binary.BigEndian.AppendUint16(buf, a.ProtocolVersion)
-	buf = append(buf, 0x00, 0x00)
+
+	w := bytes.NewBuffer(buf)
+	if err := binary.Write(w, binary.BigEndian, a.ProtocolVersion); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if _, err := w.Write([]byte{0x00, 0x00}); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
 
 	calledAETitle := [16]byte{}
 	callingAETitle := [16]byte{}
+
+	// Fill with spaces (0x20)
+	for i := 0; i < 16; i++ {
+		calledAETitle[i] = 0x20
+		callingAETitle[i] = 0x20
+	}
+
+	// Copy AE titles (truncate if longer than 16)
 	copy(calledAETitle[:], []byte(a.CalledAETitle))
 	copy(callingAETitle[:], []byte(a.CallingAETitle))
 
-	buf = append(buf, calledAETitle[:]...)
-	buf = append(buf, callingAETitle[:]...)
-	buf = append(buf, make([]byte, 32)...) // Reserved
+	if _, err := w.Write(calledAETitle[:]); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
 
-	return buf
+	if _, err := w.Write(callingAETitle[:]); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if _, err := w.Write(make([]byte, 32)); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	return w.Bytes()
 }
 
 func (a *AAssociate) applicationContext() []byte {
 	buf := make([]byte, 0, len(a.ApplicationContext)+4)
-	buf = append(buf, 0x10, 0x00)
-	buf = binary.BigEndian.AppendUint16(buf, uint16(len(a.ApplicationContext)))
-	buf = append(buf, []byte(a.ApplicationContext)...)
-	return buf
+	w := bytes.NewBuffer(buf)
+	if _, err := w.Write([]byte{0x10, 0x00}); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if err := binary.Write(w, binary.BigEndian, uint16(len(a.ApplicationContext))); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+
+	if _, err := w.Write([]byte(a.ApplicationContext)); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+	return w.Bytes()
 }
 
 func (a *AAssociate) bytes() []byte {
-	msg := make([]byte, 0)
-	msg = append(msg, a.header()...)
-	msg = append(msg, a.applicationContext()...)
-	msg = append(msg, a.PresentationContext.bytes()...)
-	msg = append(msg, a.UserInfo.bytes()...)
-	return msg
+	var buf bytes.Buffer
+
+	for _, data := range [][]byte{
+		a.header(),
+		a.applicationContext(),
+		a.PresentationContext.bytes(),
+		a.UserInfo.bytes(),
+	} {
+		if _, err := buf.Write(data); err != nil {
+			panic(fmt.Errorf("failed to write to buffer: %w", err))
+		}
+	}
+
+	return buf.Bytes()
 }
 
 func makeCEchoRQ(msgID uint16) *PDV {
-	commands := []*PDVCommand{}
-	commands = append(
-		commands,
+	commands := append(
+		[]*PDVCommand{},
 		newPDVCommand(0, 0x0002, []byte("1.2.840.10008.1.1")),
 		newPDVCommand(0, 0x0100, []byte{0x30, 0x00}),
 		newPDVCommand(0, 0x0110, []byte{byte(msgID) >> 0, byte(msgID) >> 1}),
 		newPDVCommand(0, 0x0800, []byte{0x01, 0x01}),
 	)
 
-	g := make([]byte, 0)
-	for _, cmd := range commands {
-		g = append(g, cmd.bytes()...)
-	}
-
-	b := make([]byte, 4)
-	binary.LittleEndian.PutUint32(b, uint32(len(g)))
-	commands = append([]*PDVCommand{newPDVCommand(0, 0, b)}, commands...)
-
-	return &PDV{
-		Legnth:   70,
+	pdv := &PDV{
+		Legnth:   0,
 		Context:  0x01,
 		Flags:    0x03,
 		Commands: commands,
 	}
+	pdv.addLengthCommand()
+	return pdv
+}
+
+type Key uint32
+
+func (k Key) Tag() (uint16, uint16) {
+	return uint16(k >> 16), uint16(k)
+}
+
+// We do not support more of these since they may reveal PII
+// source: https://dicom.nema.org/medical/dicom/current/output/html/part04.html#sect_C.6
+// NOTE: supporting newer keys may result in fewer results
+// Use StudyDate=01010001 for a simple test of whether the server responds to queries
+// Include PatientID, and NumberOfPatientRelated* to enumerate patient studies/series/instances
+// this is valuable to determine the activity or volume of the server
+const (
+	StudyDate Key = 0x00080020
+
+	PatientID        Key = 0x00100020
+	StudyID          Key = 0x0020000D
+	StudyInstanceUID Key = 0x0020000E
+
+	NumberOfPatientRelatedStudies   Key = 0x00201200
+	NumberOfPatientRelatedSeries    Key = 0x00201202
+	NumberOfPatientRelatedInstances Key = 0x00201204
+)
+
+func getStudyKey(key string) Key {
+	switch key {
+	case "StudyDate":
+		return StudyDate
+	case "PatientID":
+		return PatientID
+	case "StudyID":
+		return StudyID
+	case "StudyInstanceUID":
+		return StudyInstanceUID
+	case "NumberOfPatientRelatedStudies":
+		return NumberOfPatientRelatedStudies
+	case "NumberOfPatientRelatedSeries":
+		return NumberOfPatientRelatedSeries
+	case "NumberOfPatientRelatedInstances":
+		return NumberOfPatientRelatedInstances
+	default:
+		panic("unknown key: " + key)
+	}
+}
+
+type SOPClassUID string
+
+const (
+	// NOTE: we won't support PATIENT, SERIES, or IMAGE for now
+	STUDY SOPClassUID = "1.2.840.10008.5.1.4.1.2.2.1"
+)
+
+type keyFactory func(key string) Key
+
+func getSOPClassUID(model string) (SOPClassUID, keyFactory) {
+	model = strings.ToUpper(model)
+	switch model {
+	case "STUDY":
+		return STUDY, getStudyKey
+	case "PATIENT", "SERIES", "IMAGE":
+		panic("unsupported model: " + model)
+	default:
+		panic("unknown model: " + model)
+	}
+}
+
+func cFindPDV1(msgID uint16, uid SOPClassUID) *PDV {
+	cmd := append(
+		[]*PDVCommand{},
+		newPDVCommand(0, 0x0002, []byte(uid)),
+		newPDVCommand(0, 0x0100, []byte{0x30, 0x00}),
+		newPDVCommand(0, 0x0110, []byte{byte(msgID) >> 0, byte(msgID) >> 1}),
+		newPDVCommand(0, 0x0800, []byte{0x01, 0x01}),
+	)
+
+	pdv := &PDV{
+		Legnth:   0,
+		Context:  0x01,
+		Flags:    0x03,
+		Commands: cmd,
+	}
+	pdv.addLengthCommand()
+	return pdv
+}
+
+func cFindPDV2(model string, keys []string, factory keyFactory) *PDV {
+	cmd := append(
+		[]*PDVCommand{},
+		newPDVCommand(0x0008, 0x0052, []byte(model)),
+	)
+
+	// TODO: append the kwargs as PDVCommands
+	for _, key := range keys {
+		// split the key by '=', always 2 parts even if there is no '='
+		k, v, _ := strings.Cut(key, "=")
+		g, t := factory(k).Tag()
+		// TODO: afaik there is some value that needs to go in the command based on the key (e.g., LO)
+		cmd = append(cmd, newPDVCommand(g, t, []byte(v)))
+	}
+
+	pdv := &PDV{
+		Legnth:   0,
+		Context:  0x01,
+		Flags:    0x02,
+		Commands: cmd,
+	}
+	pdv.addLengthCommand()
+	return pdv
+}
+
+func makeCFindRQ(msgID uint16, model string, keys []string) (*PDV, *PDV) {
+	uid, factory := getSOPClassUID(model)
+	pdv1 := cFindPDV1(msgID, uid)
+	pdv2 := cFindPDV2(model, keys, factory)
+	return pdv1, pdv2
 }

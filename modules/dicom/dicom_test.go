@@ -21,7 +21,7 @@ func (t *dicomTester) getScanner() (*Scanner, error) {
 	flags := module.NewFlags().(*Flags)
 
 	flags.UseTLS = false
-	flags.CalledAETitle = "ORTHANC"
+	flags.CalledAETitles = "ORTHANC"
 	flags.CallingAETitle = "ZGRAB-TEST"
 
 	scanner := module.NewScanner()
@@ -73,7 +73,7 @@ func (t *dicomTester) runTest(test *testing.T, name string) {
 var tests = map[string]*dicomTester{
 	"success": {
 		target: zgrab2.ScanTarget{
-			IP:   net.ParseIP("198.244.176.149"),
+			IP:   net.ParseIP("<ip>"),
 			Port: 104,
 		},
 		expectedStatus: zgrab2.SCAN_SUCCESS,
@@ -89,7 +89,7 @@ func TestDICOM(t *testing.T) {
 type craftAndParse struct{}
 
 func (t *craftAndParse) runTest(test *testing.T, name string) {
-	assoc := makeAAssociateRQ(1, "testcalling", "testcaller")
+	assoc := makeAAssociateRQ(1, "testcalling", "testcaller", "1.2.3.4.5", "ZGRAB2-TEST")
 	assoc.addTransferSyntax(0x30, "1.2.840.10008.1.1")
 
 	assocPDU := newPDU(PDUType(1)).withMessage(assoc)

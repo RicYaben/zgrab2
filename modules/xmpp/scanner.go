@@ -63,6 +63,10 @@ func (scanner *Scanner) Protocol() string {
 	return "xmpp"
 }
 
+func (scanner *Scanner) GetScanMetadata() any {
+	return nil
+}
+
 func (scanner *Scanner) GetDialerGroupConfig() *zgrab2.DialerGroupConfig {
 	return scanner.dialerGroupConfig
 }

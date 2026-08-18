@@ -3,17 +3,30 @@ package dicom
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 
 	"github.com/zmap/zgrab2"
 )
 
+type Request func(net.Conn, *Response, any) *zgrab2.ScanError
+
+type Response struct {
+	Command string `json:"command"`
+	Data    []*PDU `json:"data,omitempty"`
+	Error   error  `json:"error,omitempty"`
+}
+
+type PreparedRequest struct {
+	Req    Request
+	Kwargs any
+}
+
 type ScanResult struct {
-	Scheme      string         `json:"scheme"`
-	Association *PDU           `json:"association,omitempty"`
-	Echo        *PDU           `json:"echo,omitempty"`
-	TLSLog      *zgrab2.TLSLog `json:"tls,omitempty"`
+	Scheme    string         `json:"scheme"`
+	TLSLog    *zgrab2.TLSLog `json:"tls,omitempty"`
+	Responses []*Response    `json:"responses,omitempty"`
 }
 
 type scan struct {
@@ -47,35 +60,54 @@ func (s *scan) connect() (net.Conn, *zgrab2.ScanError) {
 	return conn, nil
 }
 
-func (s *scan) sendAAssociateRQ(conn net.Conn, calledAE string, callingAE string) error {
-	assoc := makeAAssociateRQ(1, callingAE, calledAE)
+type dimse struct{}
+
+func (d *dimse) sendAAssociateRQ(conn net.Conn, calledAE, callingAE, implUID, implVName string) error {
+	assoc := makeAAssociateRQ(1, callingAE, calledAE, implUID, implVName)
 	assoc.addTransferSyntax(0x30, "1.2.840.10008.1.1") // abstract
 	assoc.addTransferSyntax(0x40, "1.2.840.10008.1.2") // default for DICOM
 
 	pdu := newPDU(PDUType(1)).withMessage(assoc)
 
-	_, err := conn.Write(pdu.bytes())
-	if err != nil {
+	if _, err := conn.Write(pdu.bytes()); err != nil {
 		return fmt.Errorf("failed to send Association request: %v", err)
 	}
 	return nil
 }
 
-func (s *scan) associate(conn net.Conn) *zgrab2.ScanError {
-	if err := s.sendAAssociateRQ(conn, s.scanner.config.CalledAETitle, s.scanner.config.CallingAETitle); err != nil {
+type AssociateArgs struct {
+	CalledAETitle             string
+	CallingAETitle            string
+	ImplementationClassUID    string
+	ImplementationVersionName string
+}
+
+func (d *dimse) associate(conn net.Conn, rsp *Response, kwargs any) *zgrab2.ScanError {
+	args := kwargs.(*AssociateArgs)
+	rsp.Command = "associate"
+
+	if err := d.sendAAssociateRQ(
+		conn,
+		args.CalledAETitle,
+		args.CallingAETitle,
+		args.ImplementationClassUID,
+		args.ImplementationVersionName,
+	); err != nil {
+		rsp.Error = err
 		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
 	}
 
-	rsp, err := parsePDU(conn)
-	s.result.Association = rsp
+	pdu, err := parsePDU(conn)
 	if err != nil {
-		err := fmt.Errorf("failed to parse association response: %v", err)
-		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+		rsp.Error = fmt.Errorf("failed to parse association response: %v", err)
+		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, rsp.Error)
 	}
+
+	rsp.Data = append(rsp.Data, pdu)
 	return nil
 }
 
-func (s *scan) sendCEchoRQ(conn net.Conn) error {
+func (d *dimse) sendCEchoRQ(conn net.Conn) error {
 	echo := makeCEchoRQ(1)
 	pdu := newPDU(PDUType(4)).withMessage(echo)
 
@@ -85,21 +117,86 @@ func (s *scan) sendCEchoRQ(conn net.Conn) error {
 	return nil
 }
 
-func (s *scan) echo(conn net.Conn) *zgrab2.ScanError {
-	if err := s.sendCEchoRQ(conn); err != nil {
+func (d *dimse) echo(conn net.Conn, rsp *Response, _ any) *zgrab2.ScanError {
+	rsp.Command = "echo"
+
+	if err := d.sendCEchoRQ(conn); err != nil {
+		rsp.Error = err
 		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
 	}
 
-	rsp, err := parsePDU(conn)
-	s.result.Echo = rsp
+	pdu, err := parsePDU(conn)
 	if err != nil {
-		err := fmt.Errorf("failed to parse Echo response: %v", err)
-		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+		rsp.Error = fmt.Errorf("failed to parse Echo response: %v", err)
+		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, rsp.Error)
+	}
+
+	rsp.Data = append(rsp.Data, pdu)
+	return nil
+}
+
+func (d *dimse) sendCFindRQ(conn net.Conn, model string, keys []string) error {
+	f1, f2 := makeCFindRQ(1, model, keys)
+	pdu1 := newPDU(PDUType(PDUType(4))).withMessage(f1)
+	pdu2 := newPDU(PDUType(PDUType(4))).withMessage(f2)
+
+	b := []byte{}
+	b = append(b, pdu1.bytes()...)
+	b = append(b, pdu2.bytes()...)
+
+	if _, err := conn.Write(b); err != nil {
+		return fmt.Errorf("failed to send Find request PDU2: %v", err)
 	}
 	return nil
 }
 
-func (s *scan) Grab() *zgrab2.ScanError {
+type CFindArgs struct {
+	Model   string
+	Keys    []string
+	NCancel int
+}
+
+func (d *dimse) find(conn net.Conn, rsp *Response, kwargs any) *zgrab2.ScanError {
+	args := kwargs.(*CFindArgs)
+	rsp.Command = "find"
+
+	if err := d.sendCFindRQ(conn, args.Model, args.Keys); err != nil {
+		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+	}
+
+	for i := 0; i < args.NCancel; i++ {
+		pdu, err := parsePDU(conn)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+
+			rsp.Error = fmt.Errorf("failed to parse Find response: %v", err)
+			return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, rsp.Error)
+		}
+		rsp.Data = append(rsp.Data, pdu)
+	}
+
+	return nil
+}
+
+func (d *dimse) makeRequest(req string, args any) PreparedRequest {
+	var cb Request
+	switch req {
+	case "associate":
+		cb = d.associate
+	case "echo":
+		cb = d.echo
+	case "find":
+		cb = d.find
+	default:
+		panic(fmt.Errorf("unknown request: %s", req))
+	}
+
+	return PreparedRequest{Req: cb, Kwargs: args}
+}
+
+func (s *scan) Grab(requests []PreparedRequest) *zgrab2.ScanError {
 	conn, err := s.connect()
 	if err != nil {
 		return err
@@ -113,8 +210,13 @@ func (s *scan) Grab() *zgrab2.ScanError {
 		zgrab2.CloseConnAndHandleError(conn)
 	}()
 
-	for _, callback := range []func(net.Conn) *zgrab2.ScanError{s.associate, s.echo} {
-		if err := callback(conn); err != nil {
+	for _, r := range requests {
+		rsp := &Response{
+			Data: make([]*PDU, 0),
+		}
+
+		s.result.Responses = append(s.result.Responses, rsp)
+		if err := r.Req(conn, rsp, r.Kwargs); err != nil {
 			return err
 		}
 	}

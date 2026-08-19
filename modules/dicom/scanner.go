@@ -14,13 +14,19 @@ type Flags struct {
 	zgrab2.BaseFlags `group:"Basic Options"`
 	zgrab2.TLSFlags  `group:"TLS Options"`
 
-	CallingAETitle string `long:"calling-ae-title" description:"Source DICOM Application Name. 16bytes max."`
-	CalledAETitles string `long:"called-ae-titles" default:"ORTHANC" description:"Destination DICOM Application Names. 16bytes max each"`
+	CallingAETitle string `long:"aet" default:"ZGRAB2-SCANNER" description:"Source DICOM Application Name. 16bytes max."`
+	CalledAETitles string `long:"aec" default:"ANY-SCP" description:"Destination DICOM Application Names. 16bytes max each"`
 
 	ImplementationClassUID    string `long:"class-uid" default:"1.2.3.4.5" description:"Software in use UID"`
 	ImplementationVersionName string `long:"version-name" default:"ZGRAB2" description:"Software version name"`
 
-	Requests string `long:"requests" default:"associate,echo,find" description:"Comma-separated list of DIMSE-C requests to send"`
+	// TODO: each request contains an association and a request.
+	// The iterator will try to find the best AE title and change it on the fly
+	// we can store them in the dimse object
+	// The responses can go into a Responses object which includes the PDU from the
+	// association and the others from the command.
+	// Request{Command string, Association *PDU, Response []*PDU}
+	Requests string `long:"requests" default:"echo,find" description:"Comma-separated list of DIMSE-C requests to send"`
 
 	CFindModel         string `long:"cfind-model" default:"STUDY" description:"Model for C-FIND requests"`
 	CFindKeys          string `long:"cfind-keys" default:"QueryRetrieveLevel=STUDY,PatientID" description:"Keys for C-FIND requests"`
@@ -91,7 +97,9 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 
 	args := map[string]any{
 		"associate": AssociateArgs{
-			CallingAETitle: fl.CallingAETitle,
+			CallingAETitle:            fl.CallingAETitle,
+			ImplementationClassUID:    fl.ImplementationClassUID,
+			ImplementationVersionName: fl.ImplementationVersionName,
 		},
 		"echo": nil,
 		"find": CFindArgs{

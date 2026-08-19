@@ -64,7 +64,10 @@ type dimse struct{}
 
 func (d *dimse) sendAAssociateRQ(conn net.Conn, calledAE, callingAE, implUID, implVName string) error {
 	assoc := makeAAssociateRQ(1, callingAE, calledAE, implUID, implVName)
-	assoc.addTransferSyntax(0x30, "1.2.840.10008.1.1") // abstract
+	assoc.addTransferSyntax(0x30, "1.2.840.10008.5.1.4.1.2.2.1")
+	//assoc.addTransferSyntax(0x30, "1.2.840.10008.1.1") // abstract
+	assoc.addTransferSyntax(0x40, "1.2.840.10008.1.2.1")
+	assoc.addTransferSyntax(0x40, "1.2.840.10008.1.2.2")
 	assoc.addTransferSyntax(0x40, "1.2.840.10008.1.2") // default for DICOM
 
 	pdu := newPDU(PDUType(1)).withMessage(assoc)
@@ -83,7 +86,7 @@ type AssociateArgs struct {
 }
 
 func (d *dimse) associate(conn net.Conn, rsp *Response, kwargs any) *zgrab2.ScanError {
-	args := kwargs.(*AssociateArgs)
+	args := kwargs.(AssociateArgs)
 	rsp.Command = "associate"
 
 	if err := d.sendAAssociateRQ(
@@ -157,7 +160,7 @@ type CFindArgs struct {
 }
 
 func (d *dimse) find(conn net.Conn, rsp *Response, kwargs any) *zgrab2.ScanError {
-	args := kwargs.(*CFindArgs)
+	args := kwargs.(CFindArgs)
 	rsp.Command = "find"
 
 	if err := d.sendCFindRQ(conn, args.Model, args.Keys); err != nil {

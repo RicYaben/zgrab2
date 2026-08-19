@@ -28,6 +28,10 @@ type PDUMsg interface {
 	bytes() []byte
 }
 
+type PDVFlag interface {
+	bytes() []byte
+}
+
 type PDVCommand struct {
 	GroupTag   uint16
 	ElementTag uint16
@@ -47,20 +51,61 @@ func newPDVCommand(group, tag uint16, value []byte) *PDVCommand {
 func (cmd *PDVCommand) bytes() []byte {
 	buf := make([]byte, 0, cmd.Length+8)
 	w := bytes.NewBuffer(buf)
+
 	if err := binary.Write(w, binary.LittleEndian, cmd.GroupTag); err != nil {
-		panic(fmt.Errorf("failed to write to buffer: %w", err))
+		panic(fmt.Errorf("failed to write group tag to buffer: %w", err))
 	}
 
 	if err := binary.Write(w, binary.LittleEndian, cmd.ElementTag); err != nil {
-		panic(fmt.Errorf("failed to write to buffer: %w", err))
+		panic(fmt.Errorf("failed to write element tag to buffer: %w", err))
 	}
 
 	if err := binary.Write(w, binary.LittleEndian, cmd.Length); err != nil {
-		panic(fmt.Errorf("failed to write to buffer: %w", err))
+		panic(fmt.Errorf("failed to write length to buffer: %w", err))
 	}
 
 	if _, err := w.Write(cmd.Value); err != nil {
-		panic(fmt.Errorf("failed to write to buffer: %w", err))
+		panic(fmt.Errorf("failed to write value to buffer: %w", err))
+	}
+
+	return w.Bytes()
+}
+
+type CFINDRQData struct {
+	GroupTag   uint16
+	ElementTag uint16
+	VR         string
+	Value      []byte
+}
+
+func (cmd *CFINDRQData) bytes() []byte {
+	value := cmd.Value
+
+	// Pad odd-length values according to VR.
+	if len(value)%2 != 0 {
+		value = append(value, 0x00)
+	}
+
+	var w bytes.Buffer
+
+	if err := binary.Write(&w, binary.LittleEndian, cmd.GroupTag); err != nil {
+		panic(fmt.Errorf("failed to write group tag: %w", err))
+	}
+
+	if err := binary.Write(&w, binary.LittleEndian, cmd.ElementTag); err != nil {
+		panic(fmt.Errorf("failed to write element tag: %w", err))
+	}
+
+	if _, err := w.WriteString(cmd.VR); err != nil {
+		panic(fmt.Errorf("failed to write VR: %w", err))
+	}
+
+	if err := binary.Write(&w, binary.LittleEndian, uint16(len(value))); err != nil {
+		panic(fmt.Errorf("failed to write value length: %w", err))
+	}
+
+	if _, err := w.Write(value); err != nil {
+		panic(fmt.Errorf("failed to write value: %w", err))
 	}
 
 	return w.Bytes()
@@ -70,7 +115,7 @@ type PDV struct {
 	Legnth   uint32 // we only keep this value for sanity
 	Context  uint8
 	Flags    uint8
-	Commands []*PDVCommand
+	Commands []PDVFlag
 	// NOTE: we dont care about the dataset!
 }
 
@@ -92,19 +137,25 @@ func (p *PDV) bytes() []byte {
 	return w.Bytes()
 }
 
-func (p *PDV) addLengthCommand() *PDV {
+func (p *PDV) addHead(buf *bytes.Buffer) {
+	b := make([]byte, 4)
+	binary.LittleEndian.PutUint32(b, uint32(buf.Len()))
+	head := newPDVCommand(0, 0, b)
+	p.Commands = append([]PDVFlag{head}, p.Commands...)
+
+	if _, err := buf.Write(head.bytes()); err != nil {
+		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	}
+}
+
+func (p *PDV) setLength(cmd bool) *PDV {
 	var w bytes.Buffer
 	for _, cmd := range p.Commands {
 		w.Write(cmd.bytes())
 	}
 
-	b := make([]byte, 4)
-	binary.LittleEndian.PutUint32(b, uint32(w.Len()))
-	head := newPDVCommand(0, 0, b)
-	p.Commands = append([]*PDVCommand{head}, p.Commands...)
-
-	if _, err := w.Write(head.bytes()); err != nil {
-		panic(fmt.Errorf("failed to write to buffer: %w", err))
+	if cmd {
+		p.addHead(&w)
 	}
 
 	p.Legnth = uint32(w.Len() + 2)
@@ -261,7 +312,7 @@ func (pdu *PDU) parseDataMsg(data []byte) (*PDV, error) {
 		Legnth:   uint32(len(cmds) + 2), // cms + ctx & flags
 		Context:  ctx,
 		Flags:    flags,
-		Commands: []*PDVCommand{},
+		Commands: []PDVFlag{},
 	}
 
 	r := bytes.NewReader(cmds)
@@ -295,22 +346,24 @@ func (pdu *PDU) parseDataMsg(data []byte) (*PDV, error) {
 }
 
 func (pdu *PDU) readMessage(data io.Reader) error {
-	msgBuff := make([]byte, pdu.Header.Length)
-	if _, err := data.Read(msgBuff); err != nil {
-		return fmt.Errorf("failed to read message bytes: %v", err)
+	buff := make([]byte, pdu.Header.Length)
+	if _, err := io.ReadFull(data, buff); err != nil {
+		return fmt.Errorf("failed to read message bytes: %w", err)
 	}
 
 	switch pdu.Header.PDUType {
+	case ASSOC_REJECT:
+		return ErrAssociationReject
 	case ASSOC_RQ, ASSOC_ACCEPT:
-		msg, err := pdu.parseAssociationMsg(msgBuff)
+		msg, err := pdu.parseAssociationMsg(buff)
 		if err != nil {
-			return fmt.Errorf("failed to parse association message: %v", err)
+			return fmt.Errorf("failed to parse association message: %w", err)
 		}
 		pdu.Msg = msg
 	case DATA:
-		msg, err := pdu.parseDataMsg(msgBuff)
+		msg, err := pdu.parseDataMsg(buff)
 		if err != nil {
-			return fmt.Errorf("failed to parse association message: %v", err)
+			return fmt.Errorf("failed to parse association message: %w", err)
 		}
 		pdu.Msg = msg
 	default:
@@ -464,21 +517,27 @@ func newUserInfo() *UserInfo {
 
 func (u *UserInfo) bytes() []byte {
 	var buf bytes.Buffer
+
 	for _, it := range u.Items {
 		buf.Write(it.bytes())
 	}
 
 	var w bytes.Buffer
-	if _, err := w.Write([]byte{u.Type, 0x00}); err != nil {
-		panic(fmt.Errorf("failed to write to buffer: %w", err))
-	}
 
+	// Item Type
+	w.WriteByte(u.Type)
+
+	// Reserved
+	w.WriteByte(0x00)
+
+	// Item Length
 	if err := binary.Write(&w, binary.BigEndian, uint16(buf.Len())); err != nil {
-		panic(fmt.Errorf("failed to write to buffer: %w", err))
+		panic(fmt.Errorf("failed to write item length: %w", err))
 	}
 
+	// Item contents
 	if _, err := w.Write(buf.Bytes()); err != nil {
-		panic(fmt.Errorf("failed to write to buffer: %w", err))
+		panic(fmt.Errorf("failed to write user info: %w", err))
 	}
 
 	return w.Bytes()
@@ -502,8 +561,8 @@ func makeAAssociateRQ(msgID uint8, callingAETitle, calledAETitle, impUID, impVNa
 	uInfo.Items = []*Item{
 		newItem(0x51, maxPDULength),
 		// <root>.<project>.<component>.<major>.<minor>
-		newItem(0x52, []byte(impUID)),   // e.g., 1.2.276.0.7230010.3.0.3.6.6
-		newItem(0x55, []byte(impVName)), // e.g., OFFIS_DCMTK_366
+		newItem(0x52, []byte(impUID)),
+		newItem(0x55, []byte(impVName)),
 	}
 
 	return &AAssociate{
@@ -597,7 +656,7 @@ func (a *AAssociate) bytes() []byte {
 
 func makeCEchoRQ(msgID uint16) *PDV {
 	commands := append(
-		[]*PDVCommand{},
+		[]PDVFlag{},
 		newPDVCommand(0, 0x0002, []byte("1.2.840.10008.1.1")),
 		newPDVCommand(0, 0x0100, []byte{0x30, 0x00}),
 		newPDVCommand(0, 0x0110, []byte{byte(msgID) >> 0, byte(msgID) >> 1}),
@@ -610,14 +669,14 @@ func makeCEchoRQ(msgID uint16) *PDV {
 		Flags:    0x03,
 		Commands: commands,
 	}
-	pdv.addLengthCommand()
+	pdv.setLength(true)
 	return pdv
 }
 
-type Key uint32
-
-func (k Key) Tag() (uint16, uint16) {
-	return uint16(k >> 16), uint16(k)
+type Key struct {
+	Group uint16
+	Tag   uint16
+	VR    string
 }
 
 // We do not support more of these since they may reveal PII
@@ -626,37 +685,10 @@ func (k Key) Tag() (uint16, uint16) {
 // Use StudyDate=01010001 for a simple test of whether the server responds to queries
 // Include PatientID, and NumberOfPatientRelated* to enumerate patient studies/series/instances
 // this is valuable to determine the activity or volume of the server
-const (
-	StudyDate Key = 0x00080020
-
-	PatientID        Key = 0x00100020
-	StudyID          Key = 0x0020000D
-	StudyInstanceUID Key = 0x0020000E
-
-	NumberOfPatientRelatedStudies   Key = 0x00201200
-	NumberOfPatientRelatedSeries    Key = 0x00201202
-	NumberOfPatientRelatedInstances Key = 0x00201204
-)
-
-func getStudyKey(key string) Key {
-	switch key {
-	case "StudyDate":
-		return StudyDate
-	case "PatientID":
-		return PatientID
-	case "StudyID":
-		return StudyID
-	case "StudyInstanceUID":
-		return StudyInstanceUID
-	case "NumberOfPatientRelatedStudies":
-		return NumberOfPatientRelatedStudies
-	case "NumberOfPatientRelatedSeries":
-		return NumberOfPatientRelatedSeries
-	case "NumberOfPatientRelatedInstances":
-		return NumberOfPatientRelatedInstances
-	default:
-		panic("unknown key: " + key)
-	}
+var StudyKeys = map[string]Key{
+	"QueryRetrieveLevel": {0x0008, 0x0052, "CS"},
+	//"StudyDate": {0x0008, 0x0020, }
+	"PatientID": {0x0010, 0x0020, "LO"},
 }
 
 type SOPClassUID string
@@ -666,13 +698,13 @@ const (
 	STUDY SOPClassUID = "1.2.840.10008.5.1.4.1.2.2.1"
 )
 
-type keyFactory func(key string) Key
+type keyFactory map[string]Key
 
 func getSOPClassUID(model string) (SOPClassUID, keyFactory) {
 	model = strings.ToUpper(model)
 	switch model {
 	case "STUDY":
-		return STUDY, getStudyKey
+		return STUDY, StudyKeys
 	case "PATIENT", "SERIES", "IMAGE":
 		panic("unsupported model: " + model)
 	default:
@@ -682,11 +714,12 @@ func getSOPClassUID(model string) (SOPClassUID, keyFactory) {
 
 func cFindPDV1(msgID uint16, uid SOPClassUID) *PDV {
 	cmd := append(
-		[]*PDVCommand{},
+		[]PDVFlag{},
 		newPDVCommand(0, 0x0002, []byte(uid)),
-		newPDVCommand(0, 0x0100, []byte{0x30, 0x00}),
+		newPDVCommand(0, 0x0100, []byte{0x20, 0x00}),
 		newPDVCommand(0, 0x0110, []byte{byte(msgID) >> 0, byte(msgID) >> 1}),
-		newPDVCommand(0, 0x0800, []byte{0x01, 0x01}),
+		newPDVCommand(0, 0x0700, []byte{0x00, 0x00}),
+		newPDVCommand(0, 0x0800, []byte{0x01, 0x00}),
 	)
 
 	pdv := &PDV{
@@ -695,23 +728,18 @@ func cFindPDV1(msgID uint16, uid SOPClassUID) *PDV {
 		Flags:    0x03,
 		Commands: cmd,
 	}
-	pdv.addLengthCommand()
+	pdv.setLength(true)
 	return pdv
 }
 
-func cFindPDV2(model string, keys []string, factory keyFactory) *PDV {
-	cmd := append(
-		[]*PDVCommand{},
-		newPDVCommand(0x0008, 0x0052, []byte(model)),
-	)
-
-	// TODO: append the kwargs as PDVCommands
+func cFindPDV2(keys []string, f keyFactory) *PDV {
+	cmd := []PDVFlag{}
 	for _, key := range keys {
 		// split the key by '=', always 2 parts even if there is no '='
 		k, v, _ := strings.Cut(key, "=")
-		g, t := factory(k).Tag()
-		// TODO: afaik there is some value that needs to go in the command based on the key (e.g., LO)
-		cmd = append(cmd, newPDVCommand(g, t, []byte(v)))
+		if t, ok := f[k]; ok {
+			cmd = append(cmd, &CFINDRQData{t.Group, t.Tag, t.VR, []byte(v)})
+		}
 	}
 
 	pdv := &PDV{
@@ -720,13 +748,13 @@ func cFindPDV2(model string, keys []string, factory keyFactory) *PDV {
 		Flags:    0x02,
 		Commands: cmd,
 	}
-	pdv.addLengthCommand()
+	pdv.setLength(false)
 	return pdv
 }
 
 func makeCFindRQ(msgID uint16, model string, keys []string) (*PDV, *PDV) {
 	uid, factory := getSOPClassUID(model)
 	pdv1 := cFindPDV1(msgID, uid)
-	pdv2 := cFindPDV2(model, keys, factory)
+	pdv2 := cFindPDV2(keys, factory)
 	return pdv1, pdv2
 }

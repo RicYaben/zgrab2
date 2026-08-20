@@ -10,23 +10,48 @@ import (
 	"github.com/zmap/zgrab2"
 )
 
-type Request func(net.Conn, *Response, any) *zgrab2.ScanError
+type Request func(net.Conn, any) Response
 
 type Response struct {
-	Command string `json:"command"`
-	Data    []*PDU `json:"data,omitempty"`
-	Error   error  `json:"error,omitempty"`
+	Command string            `json:"command"`
+	Data    []*PDU            `json:"data,omitempty"`
+	Error   *zgrab2.ScanError `json:"error,omitempty"`
 }
 
 type PreparedRequest struct {
-	Req    Request
-	Kwargs any
+	Req  Request
+	Args any
+}
+
+type Requests struct {
+	Assoc   PreparedRequest `json:"association"`
+	Command PreparedRequest `json:"cmd"`
+}
+
+type Probe struct {
+	Requests  Requests
+	Responses []Response
+}
+
+type Probes []Probe
+
+func (p Probes) title(t string) {
+	for _, pr := range p {
+		a := pr.Requests.Assoc.Args.(AssociateArgs)
+		a.CalledAETitle = t
+	}
+}
+
+func (p Probes) reset() {
+	for _, pr := range p {
+		pr.Responses = make([]Response, 0)
+	}
 }
 
 type ScanResult struct {
-	Scheme    string         `json:"scheme"`
-	TLSLog    *zgrab2.TLSLog `json:"tls,omitempty"`
-	Responses []*Response    `json:"responses,omitempty"`
+	Scheme string         `json:"scheme"`
+	TLSLog *zgrab2.TLSLog `json:"tls,omitempty"`
+	Result Probes         `json:"result"`
 }
 
 type scan struct {
@@ -62,13 +87,29 @@ func (s *scan) connect() (net.Conn, *zgrab2.ScanError) {
 
 type dimse struct{}
 
-func (d *dimse) sendAAssociateRQ(conn net.Conn, calledAE, callingAE, implUID, implVName string) error {
-	assoc := makeAAssociateRQ(1, callingAE, calledAE, implUID, implVName)
-	assoc.addTransferSyntax(0x30, "1.2.840.10008.5.1.4.1.2.2.1")
-	//assoc.addTransferSyntax(0x30, "1.2.840.10008.1.1") // abstract
-	assoc.addTransferSyntax(0x40, "1.2.840.10008.1.2.1")
-	assoc.addTransferSyntax(0x40, "1.2.840.10008.1.2.2")
-	assoc.addTransferSyntax(0x40, "1.2.840.10008.1.2") // default for DICOM
+func (d *dimse) sendAAssociateRQ(conn net.Conn, args AssociateArgs) error {
+	assoc := makeAAssociateRQ(1,
+		args.CallingAETitle,
+		args.CalledAETitle,
+		args.ImplementationClassUID,
+		args.ImplementationVersionName,
+	)
+
+	// set the intent of the request
+	switch args.Command {
+	case "echo":
+		assoc.addTransferSyntax(0x30, "1.2.840.10008.1.1") // abstract
+	case "find":
+		assoc.addTransferSyntax(0x30, "1.2.840.10008.5.1.4.1.2.2.1")
+	default:
+		panic(fmt.Errorf("unsuported command: %s", args.Command))
+	}
+
+	// these are retired and added for mainly for compatibility with older versions
+	assoc.addTransferSyntax(0x40, "1.2.840.10008.1.2.1").
+		addTransferSyntax(0x40, "1.2.840.10008.1.2.2")
+
+	assoc.addTransferSyntax(0x40, "1.2.840.10008.1.2")
 
 	pdu := newPDU(PDUType(1)).withMessage(assoc)
 
@@ -83,31 +124,33 @@ type AssociateArgs struct {
 	CallingAETitle            string
 	ImplementationClassUID    string
 	ImplementationVersionName string
+	Command                   string
 }
 
-func (d *dimse) associate(conn net.Conn, rsp *Response, kwargs any) *zgrab2.ScanError {
+func (d *dimse) associate(conn net.Conn, kwargs any) Response {
 	args := kwargs.(AssociateArgs)
-	rsp.Command = "associate"
+	rsp := Response{
+		Command: "associate",
+		Data:    make([]*PDU, 0),
+	}
 
 	if err := d.sendAAssociateRQ(
 		conn,
-		args.CalledAETitle,
-		args.CallingAETitle,
-		args.ImplementationClassUID,
-		args.ImplementationVersionName,
+		args,
 	); err != nil {
-		rsp.Error = err
-		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+		rsp.Error = zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+		return rsp
 	}
 
 	pdu, err := parsePDU(conn)
 	if err != nil {
-		rsp.Error = fmt.Errorf("failed to parse association response: %v", err)
-		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, rsp.Error)
+		err = fmt.Errorf("failed to parse association response: %v", err)
+		zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+		return rsp
 	}
 
 	rsp.Data = append(rsp.Data, pdu)
-	return nil
+	return rsp
 }
 
 func (d *dimse) sendCEchoRQ(conn net.Conn) error {
@@ -120,22 +163,25 @@ func (d *dimse) sendCEchoRQ(conn net.Conn) error {
 	return nil
 }
 
-func (d *dimse) echo(conn net.Conn, rsp *Response, _ any) *zgrab2.ScanError {
-	rsp.Command = "echo"
+func (d *dimse) echo(conn net.Conn, _ any) Response {
+	rsp := Response{
+		Command: "echo",
+		Data:    make([]*PDU, 0),
+	}
 
 	if err := d.sendCEchoRQ(conn); err != nil {
-		rsp.Error = err
-		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+		rsp.Error = zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+		return rsp
 	}
 
 	pdu, err := parsePDU(conn)
 	if err != nil {
-		rsp.Error = fmt.Errorf("failed to parse Echo response: %v", err)
-		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, rsp.Error)
+		rsp.Error = zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, fmt.Errorf("failed to parse Echo response: %v", err))
+		return rsp
 	}
 
 	rsp.Data = append(rsp.Data, pdu)
-	return nil
+	return rsp
 }
 
 func (d *dimse) sendCFindRQ(conn net.Conn, model string, keys []string) error {
@@ -159,12 +205,17 @@ type CFindArgs struct {
 	NCancel int
 }
 
-func (d *dimse) find(conn net.Conn, rsp *Response, kwargs any) *zgrab2.ScanError {
+func (d *dimse) find(conn net.Conn, kwargs any) Response {
 	args := kwargs.(CFindArgs)
-	rsp.Command = "find"
+
+	rsp := Response{
+		Command: "find",
+		Data:    make([]*PDU, 0),
+	}
 
 	if err := d.sendCFindRQ(conn, args.Model, args.Keys); err != nil {
-		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+		rsp.Error = zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+		return rsp
 	}
 
 	for i := 0; i < args.NCancel; i++ {
@@ -174,32 +225,31 @@ func (d *dimse) find(conn net.Conn, rsp *Response, kwargs any) *zgrab2.ScanError
 				break
 			}
 
-			rsp.Error = fmt.Errorf("failed to parse Find response: %v", err)
-			return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, rsp.Error)
+			err = fmt.Errorf("failed to parse Find response: %v", err)
+			rsp.Error = zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
+			return rsp
 		}
 		rsp.Data = append(rsp.Data, pdu)
 	}
 
-	return nil
+	return rsp
 }
 
 func (d *dimse) makeRequest(req string, args any) PreparedRequest {
 	var cb Request
 	switch req {
-	case "associate":
-		cb = d.associate
 	case "echo":
 		cb = d.echo
 	case "find":
 		cb = d.find
 	default:
-		panic(fmt.Errorf("unknown request: %s", req))
+		panic(fmt.Errorf("unknown command: %s", req))
 	}
 
-	return PreparedRequest{Req: cb, Kwargs: args}
+	return PreparedRequest{Req: cb, Args: args}
 }
 
-func (s *scan) Grab(requests []PreparedRequest) *zgrab2.ScanError {
+func (s *scan) Grab(probes Probes) *zgrab2.ScanError {
 	conn, err := s.connect()
 	if err != nil {
 		return err
@@ -213,16 +263,17 @@ func (s *scan) Grab(requests []PreparedRequest) *zgrab2.ScanError {
 		zgrab2.CloseConnAndHandleError(conn)
 	}()
 
-	for _, r := range requests {
-		rsp := &Response{
-			Data: make([]*PDU, 0),
-		}
-
-		s.result.Responses = append(s.result.Responses, rsp)
-		if err := r.Req(conn, rsp, r.Kwargs); err != nil {
-			return err
+	for _, pr := range probes {
+		for _, rq := range []PreparedRequest{pr.Requests.Assoc, pr.Requests.Command} {
+			rsp := rq.Req(conn, rq.Args)
+			pr.Responses = append(pr.Responses, rsp)
+			if err := rsp.Error; err != nil {
+				return err
+			}
 		}
 	}
+	s.result.Result = probes
+
 	return nil
 }
 

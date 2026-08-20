@@ -758,3 +758,44 @@ func makeCFindRQ(msgID uint16, model string, keys []string) (*PDV, *PDV) {
 	pdv2 := cFindPDV2(keys, factory)
 	return pdv1, pdv2
 }
+
+type Builder struct {
+	dimse dimse
+
+	aet   string
+	uid   string
+	vname string
+}
+
+func (b *Builder) buildProbe(cmd string, args any) Probe {
+	return Probe{
+		Requests: Requests{
+			PreparedRequest{
+				b.dimse.associate,
+				AssociateArgs{
+					CallingAETitle:            b.aet,
+					ImplementationClassUID:    b.uid,
+					ImplementationVersionName: b.vname,
+					Command:                   cmd,
+				},
+			},
+			b.dimse.makeRequest(cmd, args),
+		},
+		Responses: make([]Response, 0),
+	}
+}
+
+func (b *Builder) build(cmds map[string]any) Probes {
+	probes := Probes{}
+	for cmd, args := range cmds {
+		probes = append(probes, b.buildProbe(cmd, args))
+	}
+	return probes
+}
+
+func newBuilder(aet, uid, vname string) *Builder {
+	return &Builder{
+		dimse{},
+		aet, uid, vname,
+	}
+}

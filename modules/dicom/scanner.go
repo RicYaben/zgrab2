@@ -20,13 +20,7 @@ type Flags struct {
 	ImplementationClassUID    string `long:"class-uid" default:"1.2.3.4.5" description:"Software in use UID"`
 	ImplementationVersionName string `long:"version-name" default:"ZGRAB2" description:"Software version name"`
 
-	// TODO: each request contains an association and a request.
-	// The iterator will try to find the best AE title and change it on the fly
-	// we can store them in the dimse object
-	// The responses can go into a Responses object which includes the PDU from the
-	// association and the others from the command.
-	// Request{Command string, Association *PDU, Response []*PDU}
-	Requests string `long:"requests" default:"echo,find" description:"Comma-separated list of DIMSE-C requests to send"`
+	Commands string `long:"commands" default:"echo,find" description:"Comma-separated list of DIMSE-C to send"`
 
 	CFindModel         string `long:"cfind-model" default:"STUDY" description:"Model for C-FIND requests"`
 	CFindKeys          string `long:"cfind-keys" default:"QueryRetrieveLevel=STUDY,PatientID" description:"Keys for C-FIND requests"`
@@ -70,7 +64,8 @@ type Scanner struct {
 	config            *Flags
 	builder           *ScanBuilder
 	dialerGroupConfig *zgrab2.DialerGroupConfig
-	requests          [][]PreparedRequest
+	probes            Probes
+	titles            []string
 }
 
 func (scanner *Scanner) GetScanMetadata() any {
@@ -91,16 +86,15 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	fl, _ := flags.(*Flags)
 	scanner.config = fl
 	scanner.builder = NewScanBuilder(scanner)
+	scanner.titles = strings.Split(fl.CalledAETitles, ",")
 
-	titles := strings.Split(fl.CalledAETitles, ",")
-	scanner.requests = make([][]PreparedRequest, len(titles))
+	builder := newBuilder(
+		fl.CallingAETitle,
+		fl.ImplementationClassUID,
+		fl.ImplementationVersionName,
+	)
 
-	args := map[string]any{
-		"associate": AssociateArgs{
-			CallingAETitle:            fl.CallingAETitle,
-			ImplementationClassUID:    fl.ImplementationClassUID,
-			ImplementationVersionName: fl.ImplementationVersionName,
-		},
+	cmds := map[string]any{
 		"echo": nil,
 		"find": CFindArgs{
 			Model:   fl.CFindModel,
@@ -108,23 +102,20 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 			NCancel: fl.CFindNCancel,
 		},
 	}
+	rqs := strings.Split(fl.Commands, ",")
 
-	rqs := strings.Split(fl.Requests, ",")
-	for i, title := range titles {
-		nargs := args["associate"].(AssociateArgs)
-		nargs.CalledAETitle = title
-		args["associate"] = nargs
-
-		d := dimse{}
-		pr := make([]PreparedRequest, 0, 3)
+CMDS:
+	for k, _ := range cmds {
 		for _, rq := range rqs {
-			if rqArgs, ok := args[rq]; ok {
-				r := d.makeRequest(rq, rqArgs)
-				pr = append(pr, r)
+			if rq == k {
+				continue CMDS
 			}
 		}
-		scanner.requests[i] = pr
+		// we only keep the ones we want to request
+		delete(cmds, k)
 	}
+
+	scanner.probes = builder.build(cmds)
 
 	scanner.dialerGroupConfig = &zgrab2.DialerGroupConfig{
 		TransportAgnosticDialerProtocol: zgrab2.TransportTCP,
@@ -162,8 +153,9 @@ var (
 
 func (s *Scanner) scan(ctx context.Context, dialGroup *zgrab2.DialerGroup, t *zgrab2.ScanTarget, scheme string) (zgrab2.ScanStatus, interface{}, error) {
 	scan := s.builder.Build(ctx, dialGroup, t, scheme)
-	for _, rqs := range s.requests {
-		if err := scan.Grab(rqs); err != nil {
+	for _, t := range s.titles {
+		s.probes.title(t)
+		if err := scan.Grab(s.probes); err != nil {
 			if errors.Is(err.Err, ErrAssociationReject) {
 				continue
 			}

@@ -64,7 +64,7 @@ type Scanner struct {
 	config            *Flags
 	builder           *ScanBuilder
 	dialerGroupConfig *zgrab2.DialerGroupConfig
-	probes            Probes
+	probe             Probe
 	titles            []string
 }
 
@@ -115,7 +115,7 @@ CMDS:
 		delete(cmds, k)
 	}
 
-	scanner.probes = builder.build(cmds)
+	scanner.probe = builder.build(cmds)
 
 	scanner.dialerGroupConfig = &zgrab2.DialerGroupConfig{
 		TransportAgnosticDialerProtocol: zgrab2.TransportTCP,
@@ -154,8 +154,8 @@ var (
 func (s *Scanner) scan(ctx context.Context, dialGroup *zgrab2.DialerGroup, t *zgrab2.ScanTarget, scheme string) (zgrab2.ScanStatus, interface{}, error) {
 	scan := s.builder.Build(ctx, dialGroup, t, scheme)
 	for _, t := range s.titles {
-		s.probes.title(t)
-		if err := scan.Grab(s.probes); err != nil {
+		probe := s.probe.title(t)
+		if err := scan.Grab(probe); err != nil {
 			if errors.Is(err.Err, ErrAssociationReject) {
 				continue
 			}

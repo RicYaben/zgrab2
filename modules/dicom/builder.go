@@ -19,6 +19,8 @@ const (
 	ASSOC_ACCEPT PDUType = 2
 	ASSOC_REJECT PDUType = 3
 	DATA         PDUType = 4
+	RELEASE_RQ   PDUType = 5
+	RELEASE_RSP  PDUType = 6
 )
 
 // 64KiB -- correct 16384
@@ -33,10 +35,10 @@ type PDVFlag interface {
 }
 
 type PDVCommand struct {
-	GroupTag   uint16
-	ElementTag uint16
-	Length     uint32 // we only keep this value for sanity
-	Value      []byte
+	GroupTag   uint16 `json:"group_tag"`
+	ElementTag uint16 `json:"element_tag"`
+	Length     uint32 `json:"length"`
+	Value      []byte `json:"value"`
 }
 
 func newPDVCommand(group, tag uint16, value []byte) *PDVCommand {
@@ -596,7 +598,7 @@ func (a *AAssociate) header() []byte {
 	callingAETitle := [16]byte{}
 
 	// Fill with spaces (0x20)
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		calledAETitle[i] = 0x20
 		callingAETitle[i] = 0x20
 	}
@@ -659,7 +661,7 @@ func makeCEchoRQ(msgID uint16) *PDV {
 		[]PDVFlag{},
 		newPDVCommand(0, 0x0002, []byte("1.2.840.10008.1.1")),
 		newPDVCommand(0, 0x0100, []byte{0x30, 0x00}),
-		newPDVCommand(0, 0x0110, []byte{byte(msgID) >> 0, byte(msgID) >> 1}),
+		newPDVCommand(0, 0x0110, []byte{byte(msgID), byte(msgID >> 8)}),
 		newPDVCommand(0, 0x0800, []byte{0x01, 0x01}),
 	)
 
@@ -717,7 +719,7 @@ func cFindPDV1(msgID uint16, uid SOPClassUID) *PDV {
 		[]PDVFlag{},
 		newPDVCommand(0, 0x0002, []byte(uid)),
 		newPDVCommand(0, 0x0100, []byte{0x20, 0x00}),
-		newPDVCommand(0, 0x0110, []byte{byte(msgID) >> 0, byte(msgID) >> 1}),
+		newPDVCommand(0, 0x0110, []byte{byte(msgID), byte(msgID >> 8)}),
 		newPDVCommand(0, 0x0700, []byte{0x00, 0x00}),
 		newPDVCommand(0, 0x0800, []byte{0x01, 0x00}),
 	)
@@ -759,6 +761,17 @@ func makeCFindRQ(msgID uint16, model string, keys []string) (*PDV, *PDV) {
 	return pdv1, pdv2
 }
 
+func makeReleaseRQ() *PDV {
+	pdv := &PDV{
+		Legnth:   0,
+		Context:  0x01,
+		Flags:    0x02,
+		Commands: nil,
+	}
+	pdv.setLength(false)
+	return pdv
+}
+
 type Builder struct {
 	dimse dimse
 
@@ -767,7 +780,7 @@ type Builder struct {
 	vname string
 }
 
-func (b *Builder) buildProbe(cmd string, args any) Probe {
+func (b *Builder) makeProbe() Probe {
 	return Probe{
 		Requests: Requests{
 			PreparedRequest{
@@ -776,21 +789,26 @@ func (b *Builder) buildProbe(cmd string, args any) Probe {
 					CallingAETitle:            b.aet,
 					ImplementationClassUID:    b.uid,
 					ImplementationVersionName: b.vname,
-					Command:                   cmd,
 				},
+				1,
 			},
-			b.dimse.makeRequest(cmd, args),
+			make([]PreparedRequest, 0),
 		},
-		Responses: make([]Response, 0),
+		Responses: Responses{},
 	}
 }
 
-func (b *Builder) build(cmds map[string]any) Probes {
-	probes := Probes{}
+func (b *Builder) build(cmds map[string]any) Probe {
+	probe := b.makeProbe()
+
+	idx := 0
 	for cmd, args := range cmds {
-		probes = append(probes, b.buildProbe(cmd, args))
+		msgID := uint16(idx + 1)
+		c := b.dimse.makeRequest(cmd, args, msgID)
+		probe.Requests.Commands = append(probe.Requests.Commands, c)
+		idx++
 	}
-	return probes
+	return probe
 }
 
 func newBuilder(aet, uid, vname string) *Builder {

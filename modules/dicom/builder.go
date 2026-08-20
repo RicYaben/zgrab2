@@ -205,7 +205,7 @@ func (p *PDU) withMessage(msg PDUMsg) *PDU {
 func (pdu *PDU) readHeader(data io.Reader) error {
 	buf := make([]byte, 6)
 	if _, err := data.Read(buf); err != nil {
-		return fmt.Errorf("failed to read header bytes: %v", err)
+		return fmt.Errorf("failed to read header bytes: %w", err)
 	}
 
 	pdu.Header = &PDUHeader{

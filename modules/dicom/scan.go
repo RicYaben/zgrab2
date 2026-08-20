@@ -71,7 +71,7 @@ func (s *scan) connect() (net.Conn, *zgrab2.ScanError) {
 	addr := net.JoinHostPort(s.target.Host(), strconv.Itoa(int(s.target.Port)))
 	conn, err := s.dialGroup.L4Dialer(s.target)(s.ctx, "tcp", addr)
 	if err != nil {
-		return nil, zgrab2.NewScanError(zgrab2.TryGetScanStatus(err), fmt.Errorf("error opening connection to target %v: %w", addr, err))
+		return nil, zgrab2.NewScanError(zgrab2.TryGetScanStatus(err), fmt.Errorf("error opening connection to target %s: %w", s.target.Host(), err))
 	}
 
 	if s.scheme == "tls" {
@@ -110,7 +110,7 @@ func (d *dimse) sendAAssociateRQ(conn net.Conn, args AssociateArgs) error {
 	pdu := newPDU(PDUType(1)).withMessage(assoc)
 
 	if _, err := conn.Write(pdu.bytes()); err != nil {
-		return fmt.Errorf("failed to send Association request: %v", err)
+		return fmt.Errorf("failed to send Association request: %w", err)
 	}
 	return nil
 }
@@ -136,7 +136,7 @@ func (d *dimse) associate(conn net.Conn, kwargs any, _ uint16, cb rspCb) *zgrab2
 
 	pdu, err := parsePDU(conn)
 	if err != nil {
-		err = fmt.Errorf("failed to parse association response: %v", err)
+		err = fmt.Errorf("failed to parse association response: %w", err)
 		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
 	}
 
@@ -148,7 +148,7 @@ func (d *dimse) sendRelease(conn net.Conn) error {
 	rel := makeReleaseRQ()
 	pdu := newPDU(PDUType(5)).withMessage(rel)
 	if _, err := conn.Write(pdu.bytes()); err != nil {
-		return fmt.Errorf("failed to send Release request: %v", err)
+		return fmt.Errorf("failed to send Release request: %w", err)
 	}
 	return nil
 }
@@ -159,7 +159,7 @@ func (d *dimse) release(conn net.Conn) *zgrab2.ScanError {
 	}
 
 	if _, err := parsePDU(conn); err != nil {
-		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, fmt.Errorf("failed to parse Release response: %v", err))
+		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, fmt.Errorf("failed to parse Release response: %w", err))
 	}
 	return nil
 }
@@ -169,7 +169,7 @@ func (d *dimse) sendCEchoRQ(conn net.Conn, msgID uint16) error {
 	pdu := newPDU(PDUType(4)).withMessage(echo)
 
 	if _, err := conn.Write(pdu.bytes()); err != nil {
-		return fmt.Errorf("failed to send Echo request: %v", err)
+		return fmt.Errorf("failed to send Echo request: %w", err)
 	}
 	return nil
 }
@@ -184,7 +184,7 @@ func (d *dimse) echo(conn net.Conn, _ any, msgID uint16, cb rspCb) *zgrab2.ScanE
 
 	pdu, err := parsePDU(conn)
 	if err != nil {
-		err = fmt.Errorf("failed to parse Echo response: %v", err)
+		err = fmt.Errorf("failed to parse Echo response: %w", err)
 		return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
 	}
 	rsp.Data = append(rsp.Data, pdu)
@@ -201,7 +201,7 @@ func (d *dimse) sendCFindRQ(conn net.Conn, msgID uint16, model string, keys []st
 	b = append(b, pdu2.bytes()...)
 
 	if _, err := conn.Write(b); err != nil {
-		return fmt.Errorf("failed to send Find request PDU2: %v", err)
+		return fmt.Errorf("failed to send Find request PDU2: %w", err)
 	}
 	return nil
 }
@@ -243,7 +243,7 @@ func (d *dimse) find(conn net.Conn, kwargs any, msgID uint16, cb rspCb) *zgrab2.
 				break
 			}
 
-			err = fmt.Errorf("failed to parse Find response: %v", err)
+			err = fmt.Errorf("failed to parse Find response: %w", err)
 			return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
 		}
 

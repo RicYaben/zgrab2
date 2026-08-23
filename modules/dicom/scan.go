@@ -247,11 +247,10 @@ func (d *dimse) find(conn net.Conn, kwargs any, msgID uint16, cb rspCb) *zgrab2.
 			return zgrab2.NewScanError(zgrab2.SCAN_APPLICATION_ERROR, err)
 		}
 
+		rsp.Data = append(rsp.Data, pdu)
 		if d.status(pdu) != &CFindPendingStatus {
 			break
 		}
-
-		rsp.Data = append(rsp.Data, pdu)
 	}
 	return nil
 }
